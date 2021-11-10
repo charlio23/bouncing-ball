@@ -59,7 +59,7 @@ class BouncingBall2D(object):
         # Main loop
         positions = []
         self._create_ball()
-        for i in range(20*30):
+        for i in range(100*30):
             # Progress time forward
             for x in range(self._physics_steps_per_frame):
                 self._space.step(self._dt)
@@ -149,3 +149,5 @@ if __name__ == "__main__":
     game = BouncingBall2D()
     positions = game.run()
     print(positions)
+    print(positions.shape)
+    np.save('positions.npy', positions)
