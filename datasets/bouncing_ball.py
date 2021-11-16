@@ -1,10 +1,3 @@
-"""This example spawns (bouncing) balls randomly on a L-shape constructed of 
-two segment shapes. Not interactive.
-"""
-
-__version__ = "$Id:$"
-__docformat__ = "reStructuredText"
-
 # Python imports
 import random
 from typing import List
