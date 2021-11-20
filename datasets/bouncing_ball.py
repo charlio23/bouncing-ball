@@ -63,7 +63,7 @@ class BouncingBall2D(object):
             pygame.display.flip()
             # Delay fixed time between frames
             self._clock.tick(30)
-            ball_pos = [self._balls[0].body.position[0],self._balls[0].body.position[1]]
+            ball_pos = [self._balls[0].body.position[0],self._balls[0].body.position[1], self._balls[0].body.velocity[0], self._balls[0].body.velocity[1]]
             positions.append(ball_pos)
             pygame.display.set_caption("FPS: " + str(self._clock.get_fps())+ " Frame: " + str(i))
         positions = np.array(positions)
