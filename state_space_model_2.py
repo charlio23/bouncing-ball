@@ -1,12 +1,16 @@
 import numpy as np
 from matplotlib import pyplot as plt
 
-np.random.seed(43)
+
 ## Load data 
-data = np.load('./datasets/positions.npy')
-T, D = data[:,:2].shape
-noisy_data = data[:,:2] + np.random.randn(T,D)*1
-noisy_data = (noisy_data - np.mean(noisy_data,axis=0))/np.std(noisy_data,axis=0)
+data = np.load('./datasets/trimmed_datapoints.npy')
+N, T, D = data.shape
+noisy_data = data + np.random.randn(N, T,D)*1
+print(noisy_data.shape)
+for i in range(N):
+    plt.plot(noisy_data[i,:,0],noisy_data[i,:,1], color='b')
+plt.show()
+
 # Linear Gaussian State-Space Model
 """
 X_t = A X_t-1 + U_t
@@ -25,22 +29,23 @@ def initialize(T, hid_dim, D):
     return mu_0, P_0, A, cov_1, B, cov_2
 
 def filtering(mu_0, P_0, A, cov_1, B, cov_2, obs):
-    T, D = obs.shape
+    N, T, D = obs.shape
     (hid_dim,) = mu_0.shape
-    mu = np.zeros((T, hid_dim))
-    V = np.zeros((T, hid_dim, hid_dim))
+    mu = np.zeros((N, T, hid_dim))
+    V = np.zeros((N, T, hid_dim, hid_dim))
     P = np.zeros_like(V)
-    for t in range(T):
-        if t == 0:
-            K = np.dot(np.dot(P_0,B.T), np.linalg.inv(np.dot(np.dot(B,P_0),B.T) + cov_2))
-            mu[t,:] = mu_0 + np.dot(K, (obs[t,:] - np.dot(B, mu_0.reshape(hid_dim,1)).reshape(-1)).reshape(D,1)).reshape(-1)
-            V[t,:,:] = np.dot(np.eye(hid_dim) - np.dot(K,B), P_0)
-        else:
-            K = np.dot(np.dot(P[t-1,:,:],B.T),np.linalg.inv(np.dot(np.dot(B,P[t-1,:,:]),B.T) + cov_2))
-            mu[t,:] = np.dot(A,mu[t-1,:].reshape(hid_dim,1)).reshape(-1) + np.dot(K, (obs[t,:] - np.dot(B, np.dot(A,mu[t-1,:].reshape(hid_dim,1))).reshape(-1)).reshape(D,1)).reshape(-1)
-            V[t,:,:] = np.dot(np.eye(hid_dim) - np.dot(K,B), P[t,:,:])          
+    for i in range(N):
+        for t in range(T):
+            if t == 0:
+                K = np.dot(np.dot(P_0,B.T), np.linalg.inv(np.dot(np.dot(B,P_0),B.T) + cov_2))
+                mu[t,:] = mu_0 + np.dot(K, (obs[t,:] - np.dot(B, mu_0.reshape(hid_dim,1)).reshape(-1)).reshape(D,1)).reshape(-1)
+                V[t,:,:] = np.dot(np.eye(hid_dim) - np.dot(K,B), P_0)
+            else:
+                K = np.dot(np.dot(P[t-1,:,:],B.T),np.linalg.inv(np.dot(np.dot(B,P[t-1,:,:]),B.T) + cov_2))
+                mu[t,:] = np.dot(A,mu[t-1,:].reshape(hid_dim,1)).reshape(-1) + np.dot(K, (obs[t,:] - np.dot(B, np.dot(A,mu[t-1,:].reshape(hid_dim,1))).reshape(-1)).reshape(D,1)).reshape(-1)
+                V[t,:,:] = np.dot(np.eye(hid_dim) - np.dot(K,B), P[t,:,:])          
 
-        P[t,:,:] = np.dot(np.dot(A,V[t,:,:]),A.T) + cov_1
+            P[t,:,:] = np.dot(np.dot(A,V[t,:,:]),A.T) + cov_1
 
     return mu, V, P
 
@@ -97,20 +102,19 @@ def maximization(E_z, E_z_z, E_z_z_1,obs):
 # Dimensions setup
 ## Select length
 hid_dim = 4
-T = 30
-D = noisy_data.shape[1]
+N, T, D = noisy_data.shape
 # Initialization
 mu_0, P_0, A, cov_1, B, cov_2 = initialize(T, hid_dim, D)
 print(noisy_data[0])
 for i in range(100):
     # filtering
-    mu, V, P = filtering(mu_0, P_0, A, cov_1, B, cov_2, noisy_data[1:1+T,:])
+    mu, V, P = filtering(mu_0, P_0, A, cov_1, B, cov_2, noisy_data)
     # smoothing
     mu_smoothed, V_smoothed, J = smoothing(A, mu, V, P)
     # expectation
     E_z, E_z_z, E_z_z_1 = expectation(mu_smoothed, V_smoothed, J)
     # maximization
-    mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, noisy_data[1:1+T,:])
+    mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, noisy_data)
 
 
 # Convergence of the algorithm
@@ -127,8 +131,7 @@ print(cov_2)
 
 
 y = np.matmul(B.reshape(1,D,hid_dim),mu_smoothed.reshape(T,hid_dim,1))
-plt.plot(noisy_data[1:31,0],noisy_data[1:31,1],label='true')
-plt.plot(y[:,0],y[:,1],label='estimated')
-plt.legend()
+plt.plot(y[:,0],y[:,1])
+plt.plot(noisy_data[:20,0],noisy_data[:20,1])
 plt.show()
 
