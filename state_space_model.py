@@ -1,12 +1,12 @@
 import numpy as np
 from matplotlib import pyplot as plt
 
-np.random.seed(43)
+
 ## Load data 
-data = np.load('./datasets/positions.npy')
+data = np.load('./datasets/kalman_positions.npy')
 T, D = data[:,:2].shape
-noisy_data = data[:,:2] + np.random.randn(T,D)*1
-noisy_data = (noisy_data - np.mean(noisy_data,axis=0))/np.std(noisy_data,axis=0)
+noisy_data = data[:,:2] + np.random.randn(T,D)*10
+#noisy_data = (noisy_data - np.mean(noisy_data,axis=0))/np.std(noisy_data,axis=0)
 # Linear Gaussian State-Space Model
 """
 X_t = A X_t-1 + U_t
@@ -17,11 +17,11 @@ Parameters, mu_0, P_o, A, cov_1, B, cov_2
 
 def initialize(T, hid_dim, D):
     mu_0 = np.random.randn(hid_dim)
-    P_0 = np.eye(hid_dim)*0.01
-    A = np.random.randn(hid_dim,hid_dim)*0.01
-    cov_1 = np.random.randn(hid_dim,hid_dim)*0.01
-    B = np.eye(D, hid_dim)
-    cov_2 = np.random.randn(D,D)*0.01
+    P_0 = np.eye(hid_dim)*100
+    A = np.random.randn(hid_dim,hid_dim)*1 + np.eye(hid_dim)*1
+    cov_1 = np.eye(hid_dim,hid_dim)*10
+    B = np.random.randn(D,hid_dim)*0.5 + np.eye(D, hid_dim)
+    cov_2 = np.eye(D,D)*10
     return mu_0, P_0, A, cov_1, B, cov_2
 
 def filtering(mu_0, P_0, A, cov_1, B, cov_2, obs):
@@ -36,7 +36,7 @@ def filtering(mu_0, P_0, A, cov_1, B, cov_2, obs):
             mu[t,:] = mu_0 + np.dot(K, (obs[t,:] - np.dot(B, mu_0.reshape(hid_dim,1)).reshape(-1)).reshape(D,1)).reshape(-1)
             V[t,:,:] = np.dot(np.eye(hid_dim) - np.dot(K,B), P_0)
         else:
-            K = np.dot(np.dot(P[t-1,:,:],B.T),np.linalg.inv(np.dot(np.dot(B,P[t-1,:,:]),B.T) + cov_2))
+            K = np.dot(np.dot(P[t-1,:,:],B.T),np.linalg.pinv(np.dot(np.dot(B,P[t-1,:,:]),B.T) + cov_2))
             mu[t,:] = np.dot(A,mu[t-1,:].reshape(hid_dim,1)).reshape(-1) + np.dot(K, (obs[t,:] - np.dot(B, np.dot(A,mu[t-1,:].reshape(hid_dim,1))).reshape(-1)).reshape(D,1)).reshape(-1)
             V[t,:,:] = np.dot(np.eye(hid_dim) - np.dot(K,B), P[t,:,:])          
 
@@ -92,26 +92,36 @@ def maximization(E_z, E_z_z, E_z_z_1,obs):
 
     return mu_0, P_0, A, cov_1, B, cov_2
 
+def loglikelihood(mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J):
+
+    E_0 = np.trace(np.dot(np.linalg.inv(P_0), V_smoothed[0,:,:])) 
+    q_0 = -(1/2)*np.log(np.linalg.det(P_0))
+    q_0 += -(1/2)*E_0
+
+    loglikeli = q_0
+    return loglikeli
+
 
 
 # Dimensions setup
 ## Select length
 hid_dim = 4
-T = 30
+T = 5
 D = noisy_data.shape[1]
 # Initialization
 mu_0, P_0, A, cov_1, B, cov_2 = initialize(T, hid_dim, D)
 print(noisy_data[0])
-for i in range(100):
-    # filtering
-    mu, V, P = filtering(mu_0, P_0, A, cov_1, B, cov_2, noisy_data[1:1+T,:])
-    # smoothing
-    mu_smoothed, V_smoothed, J = smoothing(A, mu, V, P)
-    # expectation
-    E_z, E_z_z, E_z_z_1 = expectation(mu_smoothed, V_smoothed, J)
-    # maximization
-    mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, noisy_data[1:1+T,:])
-
+for _ in range(100):
+    for i in range(30):
+        # filtering
+        mu, V, P = filtering(mu_0, P_0, A, cov_1, B, cov_2, noisy_data[:T,:])
+        # smoothing
+        mu_smoothed, V_smoothed, J = smoothing(A, mu, V, P)
+        # expectation
+        E_z, E_z_z, E_z_z_1 = expectation(mu_smoothed, V_smoothed, J)
+        # maximization
+        mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, noisy_data[:T,:])
+    print(loglikelihood(mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J))
 
 # Convergence of the algorithm
 print("Init:")
@@ -127,7 +137,8 @@ print(cov_2)
 
 
 y = np.matmul(B.reshape(1,D,hid_dim),mu_smoothed.reshape(T,hid_dim,1))
-plt.plot(noisy_data[1:31,0],noisy_data[1:31,1],label='true')
+plt.scatter(noisy_data[:T,0],noisy_data[:T,1])
+plt.plot(data[:T,0],data[:T,1],label='true')
 plt.plot(y[:,0],y[:,1],label='estimated')
 plt.legend()
 plt.show()
