@@ -113,22 +113,14 @@ def loglikelihood(obs, mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J
     prod_A_cov = np.dot(A.T, np.dot(inv_cov_1, A))
     E_z += np.trace(np.matmul(prod_A_cov.reshape(1,hid_dim,hid_dim), V_smoothed[1:,:,:]), axis1=1, axis2=2)
 
-<<<<<<< HEAD
     prod_A_J_cov = np.matmul(np.dot(A.T, inv_cov_1).reshape(1,hid_dim,hid_dim), J[1:,:,:])
     E_z += -np.trace(np.matmul(prod_A_J_cov, V_smoothed[1:,:,:]), axis1=1, axis2=2)
-=======
-    q_z = -((N-1)/2) np.log(np.linalg.det(cov_1))
-
-    loglikeli = q_0
-    return loglikeli
->>>>>>> 4a787d490cddcf8113cb1b7e569622f09e84054d
 
     prod_A_J_cov_2 = np.matmul(np.dot(inv_cov_1, A).reshape(1,hid_dim,hid_dim), V_smoothed[1:,:,:])
     E_z += -np.trace(np.matmul(prod_A_J_cov_2, J[1:,:,:].transpose(0,2,1)), axis1=1, axis2=2)
 
     dif_z = mu_smoothed[1:,:].reshape(T-1,hid_dim,1) - np.matmul(A.reshape(1,hid_dim,hid_dim), mu_smoothed[:-1,:].reshape(T-1,hid_dim,1))
 
-<<<<<<< HEAD
     E_z += np.matmul(dif_z.transpose(0,2,1), np.matmul(inv_cov_1.reshape(1,hid_dim,hid_dim), dif_z)).reshape(T-1)
 
     q_z = -((T-1)/2)*np.log(np.linalg.det(cov_1))
@@ -156,20 +148,6 @@ def fit(obs, hid_dim, T, itMax=70, init_params=None):
     else:
         mu_0, P_0, A, cov_1, B, cov_2 = initialize_from_params(init_params)
     for i in range(itMax):
-=======
-# Dimensions setup
-## Select length
-hid_dim = 4
-T = 5
-D = noisy_data.shape[1]
-# Initialization
-
-print(noisy_data[0])
-for _ in range(100):
-    mu_0, P_0, A, cov_1, B, cov_2 = initialize(T, hid_dim, D)
-    for i in range(30):
-
->>>>>>> 4a787d490cddcf8113cb1b7e569622f09e84054d
         # filtering
         mu, V, P = filtering(mu_0, P_0, A, cov_1, B, cov_2, obs[:T,:])
         # smoothing
@@ -177,42 +155,18 @@ for _ in range(100):
         # expectation
         E_z, E_z_z, E_z_z_1 = expectation(mu_smoothed, V_smoothed, J)
         # maximization
-<<<<<<< HEAD
         mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, obs[:T,:])
     loglike = loglikelihood(obs[:T,:], mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J)
-=======
-        mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, noisy_data[:T,:])
->>>>>>> 4a787d490cddcf8113cb1b7e569622f09e84054d
     result = {
         'mu_0': mu_0,
         'P_0': P_0,
         'A': A,
-<<<<<<< HEAD
         'B': B,
         'cov_1': cov_1,
         'cov_2': cov_2,
         'mu_smoothed': mu_smoothed
     }
     return result, loglike
-=======
-        'cov_1': cov_1,
-        'B': B,
-        'cov_2': cov_2
-    }
-    print(loglikelihood(mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J))
-
-# Convergence of the algorithm
-print("Init:")
-print(mu_0)
-print(P_0)
-print("X:")
-print(A)
-print(cov_1)
-
-print("Y:")
-print(B)
-print(cov_2)
->>>>>>> 4a787d490cddcf8113cb1b7e569622f09e84054d
 
 # Dimensions setup
 ## Select length
