@@ -1,11 +1,14 @@
+from operator import matmul
 import numpy as np
 from matplotlib import pyplot as plt
+from numpy import linalg
+from tqdm import tqdm
 
 
 ## Load data 
 data = np.load('./datasets/kalman_positions.npy')
 T, D = data[:,:2].shape
-noisy_data = data[:,:2] + np.random.randn(T,D)*10
+noisy_data = data[:,:2] + np.random.randn(T,D)*20
 #noisy_data = (noisy_data - np.mean(noisy_data,axis=0))/np.std(noisy_data,axis=0)
 # Linear Gaussian State-Space Model
 """
@@ -15,14 +18,17 @@ We will perform sequential inference using a Kalman filter
 Parameters, mu_0, P_o, A, cov_1, B, cov_2
 """
 
-def initialize(T, hid_dim, D):
-    mu_0 = np.random.randn(hid_dim)
-    P_0 = np.eye(hid_dim)*100
+def initialize_random(T, hid_dim, D):
+    mu_0 = np.random.randn(hid_dim)*10
+    P_0 = np.eye(hid_dim)*1000
     A = np.random.randn(hid_dim,hid_dim)*1 + np.eye(hid_dim)*1
     cov_1 = np.eye(hid_dim,hid_dim)*10
-    B = np.random.randn(D,hid_dim)*0.5 + np.eye(D, hid_dim)
-    cov_2 = np.eye(D,D)*10
+    B =  np.eye(D, hid_dim)
+    cov_2 = np.eye(D,D)*0.1
     return mu_0, P_0, A, cov_1, B, cov_2
+
+def initialize_from_params(params):
+    return params['mu_0'], params['P_0'], params['A'], params['cov_1'], params['B'], params['cov_2']
 
 def filtering(mu_0, P_0, A, cov_1, B, cov_2, obs):
     T, D = obs.shape
@@ -92,54 +98,100 @@ def maximization(E_z, E_z_z, E_z_z_1,obs):
 
     return mu_0, P_0, A, cov_1, B, cov_2
 
-def loglikelihood(mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J):
-
+def loglikelihood(obs, mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J):
+    T, hid_dim = mu_smoothed.shape
+    D, _ = cov_2.shape
+    #Calculate terms with initial latent variable
     E_0 = np.trace(np.dot(np.linalg.inv(P_0), V_smoothed[0,:,:])) 
     q_0 = -(1/2)*np.log(np.linalg.det(P_0))
     q_0 += -(1/2)*E_0
+    
+    #Calculate terms with transitioning latent variables
+    inv_cov_1 = np.linalg.inv(cov_1)
+    E_z = np.trace(np.matmul(inv_cov_1.reshape(1,hid_dim,hid_dim), V_smoothed[1:,:,:]), axis1=1, axis2=2)
+    
+    prod_A_cov = np.dot(A.T, np.dot(inv_cov_1, A))
+    E_z += np.trace(np.matmul(prod_A_cov.reshape(1,hid_dim,hid_dim), V_smoothed[1:,:,:]), axis1=1, axis2=2)
 
-    loglikeli = q_0
+    prod_A_J_cov = np.matmul(np.dot(A.T, inv_cov_1).reshape(1,hid_dim,hid_dim), J[1:,:,:])
+    E_z += -np.trace(np.matmul(prod_A_J_cov, V_smoothed[1:,:,:]), axis1=1, axis2=2)
+
+    prod_A_J_cov_2 = np.matmul(np.dot(inv_cov_1, A).reshape(1,hid_dim,hid_dim), V_smoothed[1:,:,:])
+    E_z += -np.trace(np.matmul(prod_A_J_cov_2, J[1:,:,:].transpose(0,2,1)), axis1=1, axis2=2)
+
+    dif_z = mu_smoothed[1:,:].reshape(T-1,hid_dim,1) - np.matmul(A.reshape(1,hid_dim,hid_dim), mu_smoothed[:-1,:].reshape(T-1,hid_dim,1))
+
+    E_z += np.matmul(dif_z.transpose(0,2,1), np.matmul(inv_cov_1.reshape(1,hid_dim,hid_dim), dif_z)).reshape(T-1)
+
+    q_z = -((T-1)/2)*np.log(np.linalg.det(cov_1))
+    q_z += -(1/2)*np.sum(E_z, axis=0)
+
+    #Calculate terms with observational distribution
+    inv_cov_2 = np.linalg.inv(cov_2)
+    prod_B_cov = np.dot(B.T, np.dot(inv_cov_2, B))
+    E_x = np.trace(np.matmul(prod_B_cov.reshape(1,hid_dim,hid_dim), V_smoothed), axis1=1, axis2=2)
+
+    dif_x = obs.reshape(T,D,1) - np.matmul(B.reshape(1,D,hid_dim), mu_smoothed.reshape(T,hid_dim,1))
+    E_x += np.matmul(dif_x.transpose(0,2,1), np.matmul(inv_cov_2.reshape(1,D,D), dif_x)).reshape(T)
+    q_x = -(T/2)*np.log(np.linalg.det(cov_2))
+    q_x += -(1/2)*np.sum(E_x, axis=0)
+
+    loglikeli = q_0 + q_z + q_x
+
     return loglikeli
 
-
-
-# Dimensions setup
-## Select length
-hid_dim = 4
-T = 5
-D = noisy_data.shape[1]
-# Initialization
-mu_0, P_0, A, cov_1, B, cov_2 = initialize(T, hid_dim, D)
-print(noisy_data[0])
-for _ in range(100):
-    for i in range(30):
+def fit(obs, hid_dim, T, itMax=70, init_params=None):
+    D = obs.shape[1]
+    # Initialization
+    if init_params is None:
+        mu_0, P_0, A, cov_1, B, cov_2 = initialize_random(T, hid_dim, D)
+    else:
+        mu_0, P_0, A, cov_1, B, cov_2 = initialize_from_params(init_params)
+    for i in range(itMax):
         # filtering
-        mu, V, P = filtering(mu_0, P_0, A, cov_1, B, cov_2, noisy_data[:T,:])
+        mu, V, P = filtering(mu_0, P_0, A, cov_1, B, cov_2, obs[:T,:])
         # smoothing
         mu_smoothed, V_smoothed, J = smoothing(A, mu, V, P)
         # expectation
         E_z, E_z_z, E_z_z_1 = expectation(mu_smoothed, V_smoothed, J)
         # maximization
-        mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, noisy_data[:T,:])
-    print(loglikelihood(mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J))
+        mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, obs[:T,:])
+    loglike = loglikelihood(obs[:T,:], mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J)
+    result = {
+        'mu_0': mu_0,
+        'P_0': P_0,
+        'A': A,
+        'B': B,
+        'cov_1': cov_1,
+        'cov_2': cov_2,
+        'mu_smoothed': mu_smoothed
+    }
+    return result, loglike
 
-# Convergence of the algorithm
-print("Init:")
-print(mu_0)
-print(P_0)
-print("X:")
-print(A)
-print(cov_1)
-
-print("Y:")
-print(B)
-print(cov_2)
-
-
-y = np.matmul(B.reshape(1,D,hid_dim),mu_smoothed.reshape(T,hid_dim,1))
+# Dimensions setup
+## Select length
+hid_dim = 4
+T = 100
+best_init = None
+converged_rate = 0
+for i in tqdm(range(1000)):
+    try:
+        result, loglike = fit(noisy_data, hid_dim, T)
+        if not np.isnan(loglike):
+            converged_rate += 1
+            if best_init is None:
+                best_init = (result, loglike)
+            elif (loglike > best_init[1]):
+                best_init = (result, loglike)
+    except np.linalg.LinAlgError:
+        continue
+print(converged_rate*100/1000)
+# Finalization of seeding initialization process
+print(best_init[1])
+result = best_init[0]
+prediction = np.matmul(result['B'].reshape(1,D,hid_dim),result['mu_smoothed'].reshape(T,hid_dim,1))
 plt.scatter(noisy_data[:T,0],noisy_data[:T,1])
 plt.plot(data[:T,0],data[:T,1],label='true')
-plt.plot(y[:,0],y[:,1],label='estimated')
+plt.plot(prediction[:,0],prediction[:,1],label='estimated')
 plt.legend()
 plt.show()
-
