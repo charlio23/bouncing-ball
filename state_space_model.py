@@ -98,6 +98,8 @@ def loglikelihood(mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J):
     q_0 = -(1/2)*np.log(np.linalg.det(P_0))
     q_0 += -(1/2)*E_0
 
+    q_z = -((N-1)/2) np.log(np.linalg.det(cov_1))
+
     loglikeli = q_0
     return loglikeli
 
@@ -109,10 +111,12 @@ hid_dim = 4
 T = 5
 D = noisy_data.shape[1]
 # Initialization
-mu_0, P_0, A, cov_1, B, cov_2 = initialize(T, hid_dim, D)
+
 print(noisy_data[0])
 for _ in range(100):
+    mu_0, P_0, A, cov_1, B, cov_2 = initialize(T, hid_dim, D)
     for i in range(30):
+
         # filtering
         mu, V, P = filtering(mu_0, P_0, A, cov_1, B, cov_2, noisy_data[:T,:])
         # smoothing
@@ -121,6 +125,14 @@ for _ in range(100):
         E_z, E_z_z, E_z_z_1 = expectation(mu_smoothed, V_smoothed, J)
         # maximization
         mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, noisy_data[:T,:])
+    result = {
+        'mu_0': mu_0,
+        'P_0': P_0,
+        'A': A,
+        'cov_1': cov_1,
+        'B': B,
+        'cov_2': cov_2
+    }
     print(loglikelihood(mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J))
 
 # Convergence of the algorithm
