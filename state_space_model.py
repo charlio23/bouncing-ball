@@ -20,11 +20,11 @@ Parameters, mu_0, P_o, A, cov_1, B, cov_2
 
 def initialize_random(T, hid_dim, D):
     mu_0 = np.random.randn(hid_dim)*10
-    P_0 = np.eye(hid_dim)*1000
+    P_0 = np.eye(hid_dim)*100
     A = np.random.randn(hid_dim,hid_dim)*1 + np.eye(hid_dim)*1
-    cov_1 = np.eye(hid_dim,hid_dim)*10
+    cov_1 = np.eye(hid_dim,hid_dim)*1
     B =  np.eye(D, hid_dim)
-    cov_2 = np.eye(D,D)*0.1
+    cov_2 = np.eye(D,D)*1
     return mu_0, P_0, A, cov_1, B, cov_2
 
 def initialize_from_params(params):
@@ -156,6 +156,7 @@ def fit(obs, hid_dim, T, itMax=70, init_params=None):
         E_z, E_z_z, E_z_z_1 = expectation(mu_smoothed, V_smoothed, J)
         # maximization
         mu_0, P_0, A, cov_1, B, cov_2 = maximization(E_z, E_z_z, E_z_z_1, obs[:T,:])
+
     loglike = loglikelihood(obs[:T,:], mu_0, P_0, A, cov_1, B, cov_2, mu_smoothed, V_smoothed, J)
     result = {
         'mu_0': mu_0,
@@ -174,7 +175,7 @@ hid_dim = 4
 T = 100
 best_init = None
 converged_rate = 0
-for i in tqdm(range(1000)):
+for i in tqdm(range(100)):
     try:
         result, loglike = fit(noisy_data, hid_dim, T)
         if not np.isnan(loglike):
@@ -185,10 +186,11 @@ for i in tqdm(range(1000)):
                 best_init = (result, loglike)
     except np.linalg.LinAlgError:
         continue
-print(converged_rate*100/1000)
+print(converged_rate*100/100)
 # Finalization of seeding initialization process
 print(best_init[1])
 result = best_init[0]
+print(result)
 prediction = np.matmul(result['B'].reshape(1,D,hid_dim),result['mu_smoothed'].reshape(T,hid_dim,1))
 plt.scatter(noisy_data[:T,0],noisy_data[:T,1])
 plt.plot(data[:T,0],data[:T,1],label='true')
