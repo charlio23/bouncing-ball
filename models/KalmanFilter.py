@@ -1,8 +1,13 @@
 import numpy as np
+from tqdm import tqdm
 
 class KalmanFilter():
 
     def __init__(self, hid_dim, obs_dim):
+
+        # Mode single or dataset, if one has a dataset of samples 
+        # with different initial coordinates but same dynamics
+        self.mode = 'single'
 
         self.hid_dim = hid_dim
         self.obs_dim = obs_dim
@@ -46,13 +51,6 @@ class KalmanFilter():
         self.C =  np.eye(self.obs_dim, self.hid_dim)
         self.cov_2 = np.eye(self.obs_dim,self.obs_dim)*1
 
-        self.mu_0 = np.zeros(self.hid_dim)
-        self.P_0 = np.eye(self.hid_dim)
-        self.A = np.eye(self.hid_dim)
-        self.cov_1 = np.eye(self.hid_dim,self.hid_dim)
-        self.C =  np.eye(self.obs_dim, self.hid_dim)
-        self.cov_2 = np.eye(self.obs_dim,self.obs_dim)
-
     def _expectation(self):
         self._E_z = self.smoothed_state_mean
         self._E_z_z = self.smoothed_state_cov + np.matmul(self.smoothed_state_mean.reshape(self.T,self.hid_dim,1), self.smoothed_state_mean.reshape(self.T,1,self.hid_dim))
@@ -77,6 +75,14 @@ class KalmanFilter():
         cov_2_term_4 = np.matmul(self.C.reshape(1,self.obs_dim,self.hid_dim),np.matmul(self._E_z_z, self.C.T.reshape(1,self.hid_dim,self.obs_dim)))
         self.cov_2 = (1/self.T)*np.sum(cov_2_term_1 - cov_2_term_2 - cov_2_term_3 + cov_2_term_4,axis=0)
 
+    def set_params(self, params):
+        self.mu_0 = params['mu_0']
+        self.P_0 = params['P_0']
+        self.A = params['A']
+        self.C = params['C']
+        self.cov_1 = params['cov_1']
+        self.cov_2 = params['cov_2']
+
     def set_input(self, obs):
         self.T = obs.shape[0]
         self.observations = obs
@@ -89,11 +95,11 @@ class KalmanFilter():
             if t == 0:
                 K = np.dot(np.dot(self.P_0,self.C.T), np.linalg.pinv(np.dot(np.dot(self.C,self.P_0),self.C.T) + self.cov_2))
                 mu[t,:] = self.mu_0 + np.dot(K, (self.observations[t,:] - np.dot(self.C, self.mu_0.reshape(self.hid_dim,1)).reshape(-1)).reshape(self.obs_dim,1)).reshape(-1)
-                V[t,:,:] = np.dot(np.eye(self.hid_dim) - np.dot(K,self.C), self.P_0)
+                V[t,:,:] = self.P_0 - np.dot(np.dot(K,self.C), self.P_0)
             else:
                 K = np.dot(np.dot(self.P[t-1,:,:],self.C.T),np.linalg.pinv(np.dot(np.dot(self.C,self.P[t-1,:,:]),self.C.T) + self.cov_2))
                 mu[t,:] = np.dot(self.A,mu[t-1,:].reshape(self.hid_dim,1)).reshape(-1) + np.dot(K, (self.observations[t,:] - np.dot(self.C, np.dot(self.A,mu[t-1,:].reshape(self.hid_dim,1))).reshape(-1)).reshape(self.obs_dim,1)).reshape(-1)
-                V[t,:,:] = np.dot(np.eye(self.hid_dim) - np.dot(K,self.C), self.P[t,:,:])          
+                V[t,:,:] = self.P[t-1,:,:] - np.dot(np.dot(K,self.C), self.P[t-1,:,:])          
 
             self.P[t,:,:] = np.dot(np.dot(self.A,V[t,:,:]),self.A.T) + self.cov_1
 
@@ -169,5 +175,30 @@ class KalmanFilter():
             self._expectation()
             self._maximization()
 
-    def sieve(self):
-        return
+    def sieve(self, observations, num_inits=100):
+        best_init = None
+        converged_rate = 0
+        if observations is not None:
+            self.set_input(observations)
+        for _ in tqdm(range(num_inits)):
+            try:
+                self.em(itMax=50)
+                loglikelihoood = self.compute_loglikelihood()
+                result = {
+                    'mu_0': self.mu_0,
+                    'P_0': self.P_0,
+                    'A': self.A,
+                    'C': self.C,
+                    'cov_1': self.cov_1,
+                    'cov_2': self.cov_2,
+                }
+                if not np.isnan(loglikelihoood):
+                    converged_rate += 1
+                    if best_init is None:
+                        best_init = (result, loglikelihoood)
+                    elif (loglikelihoood > best_init[1]):
+                        best_init = (result, loglikelihoood)
+            except np.linalg.LinAlgError:
+                continue
+        print('Sieving finished with a convergence rate of', converged_rate*100/num_inits)
+        self.set_params(best_init[0])
