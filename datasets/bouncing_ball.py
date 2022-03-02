@@ -93,8 +93,8 @@ class BouncingBall2D(object):
         vertices = to_convex_contour(N)
         midpoint = calculate_midpoint(vertices)
         vertices = [[p[0] - midpoint[0] + 0.5, p[1] - midpoint[1] + 0.5] for p in vertices]
-        print(vertices)
-        print(midpoint)
+        #print(vertices)
+        #print(midpoint)
         line_width = 2
         static_body = self._space.static_body
         static_lines = [
