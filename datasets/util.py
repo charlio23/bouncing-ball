@@ -1,4 +1,5 @@
 import random
+from functools import reduce
 from math import atan2
 
 def to_convex_contour(vertices_count,
@@ -58,6 +59,21 @@ def _to_vectors_coordinates(coordinates, min_coordinate, max_coordinate):
                    last_max - max_coordinate))
     return result
 
-
 def _to_random_boolean():
     return random.getrandbits(1)
+
+def calculate_midpoint(vertices):
+    num_vert = len(vertices)
+    lam = lambda acc, a: [a[0] + acc[0], a[1] + acc[1]]
+    sum = reduce(lam, vertices)
+    return [sum[0]/num_vert, sum[1]/num_vert]
+
+
+if __name__=="__main__":
+    N = 10
+    vertices = to_convex_contour(N)
+    midpoint = calculate_midpoint(vertices)
+    print(vertices)
+    print(midpoint)
+
+
