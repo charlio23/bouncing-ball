@@ -9,6 +9,7 @@ class VRNN(nn.Module):
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.prior = MLP(self.hidden_dim, self.hidden_dim, self.latent_dim*2)
+        self.input_type = input_type
         if input_type=='visual':
             self.embedder_x = None
             self.decoder = None
@@ -45,11 +46,16 @@ class VRNN(nn.Module):
     def _decode(self, z, h_prev, c_prev=None):
         embed_z = self.embedder_z(z)
         decoder_in = torch.cat([embed_z, h_prev], dim=-1)
-        (x_mu, x_log_var) = self.decoder(decoder_in).split(self.input_dim, dim=-1)
-        eps = torch.normal(mean=torch.zeros_like(x_mu)).to(z.device)
-        # Cap std to 100 for stability
-        x_std = torch.minimum((x_log_var*0.5).exp(), torch.FloatTensor([100.]).to(z.device))
-        x = x_mu + x_std*eps
+        if not self.input_type == "visual":
+            (x_mu, x_log_var) = self.decoder(decoder_in).split(self.input_dim, dim=-1)
+            eps = torch.normal(mean=torch.zeros_like(x_mu)).to(z.device)
+            # Cap std to 100 for stability
+            x_std = torch.minimum((x_log_var*0.5).exp(), torch.FloatTensor([100.]).to(z.device))
+            x = x_mu + x_std*eps
+        else:
+            x_mu = None
+            x_log_var = None
+            x = self.decoder(decoder_in)
         input = torch.cat([self.embedder_x(x), embed_z], dim=-1)
         h, c = self.hidden_decoder(input, (h_prev, c_prev))
         return x, x_mu, x_log_var, h, c
