@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 def nll_gaussian(mu_x, log_var, target):
-    eps = torch.FloatTensor([1e-6])
+    eps = torch.FloatTensor([1e-6]).to(log_var.device)
     
     log_var = torch.maximum(log_var, torch.log(eps))
     neg_log_p = (mu_x - target) ** 2 / (2 * log_var.exp())
