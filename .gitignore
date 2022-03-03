@@ -1,8 +1,10 @@
+datasets/bouncing_ball
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-
+*.gif
+*.png
 # C extensions
 *.so
 
