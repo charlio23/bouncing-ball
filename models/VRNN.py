@@ -37,7 +37,7 @@ class VRNN(nn.Module):
     def _inference(self, x, h):
         encoder_in = torch.cat([self.embedder_x(x), h], dim=-1)
         (z_mu, z_log_var) = self.encoder(encoder_in).split(self.latent_dim, dim=-1)
-        eps = torch.normal(mean=torch.zeros_like(z_mu))
+        eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
         z_std = (z_log_var*0.5).exp()
         sample = z_mu + z_std*eps
         return sample, z_mu, z_log_var
@@ -46,7 +46,7 @@ class VRNN(nn.Module):
         embed_z = self.embedder_z(z)
         decoder_in = torch.cat([embed_z, h_prev], dim=-1)
         (x_mu, x_log_var) = self.decoder(decoder_in).split(self.input_dim, dim=-1)
-        eps = torch.normal(mean=torch.zeros_like(x_mu))
+        eps = torch.normal(mean=torch.zeros_like(x_mu)).to(z.device)
         # Cap std to 100 for stability
         x_std = torch.minimum((x_log_var*0.5).exp(), torch.FloatTensor([100.]))
         x = x_mu + x_std*eps
@@ -56,7 +56,7 @@ class VRNN(nn.Module):
 
     def _sample(self, h):
         z_mu, z_log_var = self.prior(h)
-        eps = torch.normal(mean=torch.zeros_like(z_mu))
+        eps = torch.normal(mean=torch.zeros_like(z_mu)).to(h.device)
         # Cap std to 100 for stability
         z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]))
         sample = z_mu + z_std*eps
@@ -64,13 +64,13 @@ class VRNN(nn.Module):
 
     def forward(self, x):
         b, seq_len, _ = x.size()
-        h_prev = torch.zeros((b, self.hidden_dim))
-        c_prev = torch.zeros((b, self.hidden_dim))
-        reconstr_seq = torch.zeros_like(x)
+        h_prev = torch.zeros((b, self.hidden_dim)).to(x.device)
+        c_prev = torch.zeros((b, self.hidden_dim)).to(x.device)
+        reconstr_seq = torch.zeros_like(x).to(x.device)
         sizes_z_params = [b, seq_len, 2, self.latent_dim]
-        z_params = torch.zeros(sizes_z_params)
+        z_params = torch.zeros(sizes_z_params).to(x.device)
         sizes_x_params = [b, seq_len, 2, self.input_dim]
-        x_params = torch.zeros(sizes_x_params)
+        x_params = torch.zeros(sizes_x_params).to(x.device)
         for i in range(seq_len):
             last_x = x[:,i,:]
 
