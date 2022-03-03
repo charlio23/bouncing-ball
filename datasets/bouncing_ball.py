@@ -72,7 +72,7 @@ class BouncingBall2D(object):
             self._clear_screen()
             self._draw_objects()
             # Delay fixed time between frames
-            self._clock.tick(30)
+            #self._clock.tick(30)
             ball_pos = [self._balls[0].body.position[0],self._balls[0].body.position[1], self._balls[0].body.velocity[0], self._balls[0].body.velocity[1]]
             positions.append(ball_pos)
             string_image = pygame.image.tostring(self._screen, 'RGB')
