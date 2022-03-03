@@ -38,7 +38,7 @@ class VRNN(nn.Module):
         encoder_in = torch.cat([self.embedder_x(x), h], dim=-1)
         (z_mu, z_log_var) = self.encoder(encoder_in).split(self.latent_dim, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
-        z_std = (z_log_var*0.5).exp()
+        z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(h.device))
         sample = z_mu + z_std*eps
         return sample, z_mu, z_log_var
 
@@ -48,7 +48,7 @@ class VRNN(nn.Module):
         (x_mu, x_log_var) = self.decoder(decoder_in).split(self.input_dim, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(x_mu)).to(z.device)
         # Cap std to 100 for stability
-        x_std = torch.minimum((x_log_var*0.5).exp(), torch.FloatTensor([100.]))
+        x_std = torch.minimum((x_log_var*0.5).exp(), torch.FloatTensor([100.].to(z.device)))
         x = x_mu + x_std*eps
         input = torch.cat([self.embedder_x(x), embed_z], dim=-1)
         h, c = self.hidden_decoder(input, (h_prev, c_prev))
@@ -58,7 +58,7 @@ class VRNN(nn.Module):
         z_mu, z_log_var = self.prior(h)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(h.device)
         # Cap std to 100 for stability
-        z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]))
+        z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(h.device))
         sample = z_mu + z_std*eps
         return sample
 
