@@ -23,7 +23,7 @@ class BouncingBallDataLoader(Dataset):
         sample = np.load(os.path.join(
             self.root_dir, self.file_list[i]))[self.key]
         if not self.images:
-            sample = sample[:,:2]/256.0 - 0.5
+            sample = sample[:,:2]/128.0 - 1.0
         else:
             sample = sample.transpose((0,3,1,2))
         return sample
@@ -65,5 +65,7 @@ if __name__ == '__main__':
     print(len(dl))
     train_loader = torch.utils.data.DataLoader(dl, batch_size=1, shuffle=False)
     sample = next(iter(train_loader))
+    print(torch.max(sample))
+    print(torch.min(sample))
     print(sample.size())
     #visualize_rollout(sample[0], save=True)

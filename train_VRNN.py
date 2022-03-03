@@ -1,5 +1,5 @@
 # Imports
-
+import os
 import time
 
 import numpy as np
@@ -19,15 +19,19 @@ from models.VRNN import VRNN
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
 
+def save_checkpoint(state, filename='model'):
+    os.makedirs("stored_models/", exist_ok=True)
+    torch.save(state, "models/" + filename + '_latest.pth.tar')
+
 def main():
 
     # Set up writers and device
-    seq_len = 100
+    writer = SummaryWriter(log_dir=os.path.join('runs', 'vrnn_test'))
     device = get_device()
-
+    print("=> Using device: " + device)
     # Load dataset
     dl = BouncingBallDataLoader('datasets/bouncing_ball/train', False)
-    train_loader = DataLoader(dl, batch_size=16, shuffle=True)
+    train_loader = DataLoader(dl, batch_size=128, shuffle=True)
     sample = next(iter(train_loader)).float()
     _, _, input_dim = sample.size()
 
@@ -41,18 +45,20 @@ def main():
 
     # Train Loop
     vrnn.train()
-    for epoch in range(1, 10):
+    for epoch in range(1, 500):
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
 
             # Forward sample to network
-            var = Variable(sample[:,:seq_len].float(), requires_grad=True).to(device)
+            var = Variable(sample.float(), requires_grad=True).to(device)
             optimizer.zero_grad()
             reconstr_seq, z_params, x_params = vrnn(var)
             # Compute loss and optimize params
-            loss = kld_loss(z_params[:,:,0,:], z_params[:,:,1,:])
-            loss += nll_gaussian(x_params[:,:,0,:], x_params[:,:,1,:], var)
+
+            kld = kld_loss(z_params[:,:,0,:], z_params[:,:,1,:])
+            nll = nll_gaussian(x_params[:,:,0,:], x_params[:,:,1,:], var)
+            loss = kld + nll
             loss.backward()
             optimizer.step()
             b, seq_len, dim = var.size()
@@ -67,6 +73,15 @@ def main():
                     'Time {batch_time:.3f}\t'
                     'Loss {loss:.4e}\t MSE: {mse:.4e}'.format(
                     epoch, i, len(train_loader), batch_time=batch_time, loss=loss, mse=mse))
+                writer.add_scalar('data/nll_loss', nll, i + epoch*len(train_loader))
+                writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
+                writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
+
+        save_checkpoint({
+            'epoch': epoch,
+            'vrnn': vrnn.state_dict()
+        }, filename='VRNN_positions')
+
 
 if __name__=="__main__":
     main()

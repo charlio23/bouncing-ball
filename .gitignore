@@ -1,4 +1,6 @@
 datasets/bouncing_ball
+runs
+stored_models
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
