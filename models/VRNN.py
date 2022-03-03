@@ -47,7 +47,8 @@ class VRNN(nn.Module):
         decoder_in = torch.cat([embed_z, h_prev], dim=-1)
         (x_mu, x_log_var) = self.decoder(decoder_in).split(self.input_dim, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(x_mu))
-        x_std = (x_log_var*0.5).exp()
+        # Cap std to 100 for stability
+        x_std = torch.minimum((x_log_var*0.5).exp(), torch.FloatTensor([100.]))
         x = x_mu + x_std*eps
         input = torch.cat([self.embedder_x(x), embed_z], dim=-1)
         h, c = self.hidden_decoder(input, (h_prev, c_prev))
@@ -56,7 +57,8 @@ class VRNN(nn.Module):
     def _sample(self, h):
         z_mu, z_log_var = self.prior(h)
         eps = torch.normal(mean=torch.zeros_like(z_mu))
-        z_std = (z_log_var*0.5).exp()
+        # Cap std to 100 for stability
+        z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]))
         sample = z_mu + z_std*eps
         return sample
 

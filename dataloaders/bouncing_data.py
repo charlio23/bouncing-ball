@@ -10,6 +10,7 @@ class BouncingBallDataLoader(Dataset):
     def __init__(self, root_dir, images=True):
         self.root_dir = root_dir
         self.file_list = os.listdir(root_dir)
+        self.images = images
         if images:
             self.key = 'images'
         else:
@@ -19,9 +20,12 @@ class BouncingBallDataLoader(Dataset):
         return len(self.file_list)
 
     def __getitem__(self, i):
-        print(self.file_list[i])
         sample = np.load(os.path.join(
             self.root_dir, self.file_list[i]))[self.key]
+        if not self.images:
+            sample = sample[:,:2]/256.0 - 0.5
+        else:
+            sample = sample.transpose((0,3,1,2))
         return sample
 
 
@@ -57,9 +61,9 @@ def visualize_rollout(rollout, interval=50, show_step=False, save=False):
 
 
 if __name__ == '__main__':
-    dl = BouncingBallDataLoader('datasets/bouncing_ball/train', True)
+    dl = BouncingBallDataLoader('datasets/bouncing_ball/train', False)
     print(len(dl))
     train_loader = torch.utils.data.DataLoader(dl, batch_size=1, shuffle=False)
     sample = next(iter(train_loader))
     print(sample.size())
-    visualize_rollout(sample[0], save=True)
+    #visualize_rollout(sample[0], save=True)

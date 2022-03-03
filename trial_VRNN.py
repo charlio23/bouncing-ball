@@ -7,7 +7,7 @@ from utils.losses import nll_gaussian, kld_loss
 
 
 
-dl = BouncingBallDataLoader('datasets/trimmed_datapoints.npy')
+dl = BouncingBallDataLoader('datasets/bouncing_ball/train', False)
 train_loader = torch.utils.data.DataLoader(dl, batch_size=16, shuffle=True)
 sample = next(iter(train_loader)).float()
 
@@ -18,6 +18,7 @@ print(vrnn)
 reconstr_seq, z_params, x_params = vrnn(sample)
 print(z_params.size())
 print(x_params.size())
+print(reconstr_seq[0])
 print(kld_loss(z_params[:,:,0,:], z_params[:,:,1,:]))
 print(nll_gaussian(x_params[:,:,0,:], x_params[:,:,1,:], sample))
 loss = kld_loss(z_params[:,:,0,:], z_params[:,:,1,:]) + nll_gaussian(x_params[:,:,0,:], x_params[:,:,1,:], sample)
