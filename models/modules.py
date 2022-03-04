@@ -1,4 +1,3 @@
-from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,7 +27,7 @@ class MLP(nn.Module):
 class ResidualBlock(nn.Module):
     "Each residual block should up-sample an image x2"
     def __init__(self, input_channels):
-        super(ResidualBlock).__init__()
+        super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=input_channels,
                                 out_channels=64,
                                 kernel_size=3,
@@ -45,7 +44,7 @@ class ResidualBlock(nn.Module):
                         out_channels=64,
                         kernel_size=1,
                         stride=1,
-                        padding=1)
+                        padding=0)
     
 
     def forward(self, x):
@@ -58,11 +57,12 @@ class ResidualBlock(nn.Module):
 
 class CNNResidualDecoder(nn.Module):
     def __init__(self):
-        super(CNNResidualDecoder).__init__()
+        super(CNNResidualDecoder, self).__init__()
+        self.first_mlp = MLP(256, 64, 64)
         self.first_block = ResidualBlock(input_channels=1)
         self.residual_blocks = nn.ModuleList([
             ResidualBlock(input_channels=64)
-        for i in range(3)])
+        for i in range(2)])
         self.out_conv = nn.Conv2d(in_channels=64,
                                   out_channels=3,
                                   kernel_size=3,
@@ -70,15 +70,18 @@ class CNNResidualDecoder(nn.Module):
                                   padding=1)
 
     def forward(self, x):
+        b, *_ = x.size()
+        x = self.first_mlp(x).reshape((b, 1, 8, 8))
         x = self.first_block(x)
         for residual_layer in self.residual_blocks:
             x = residual_layer(x)
-        x = F.sigmoid(self.out_conv(x))
+        x = torch.sigmoid(self.out_conv(x))
+        print(x.size())
         return x
 
 class CNNEncoder(nn.Module):
     def __init__(self, input_channels, output_dim, num_layers):
-        super(CNNEncoder).__init__()
+        super(CNNEncoder, self).__init__()
         self.in_conv = nn.Conv2d(in_channels=input_channels,
                                  out_channels=64,
                                  kernel_size=3,
@@ -96,12 +99,13 @@ class CNNEncoder(nn.Module):
                                  kernel_size=4,
                                  stride=2,
                                  padding=1)
-        self.out_mlp = MLP(1024, 128, output_dim)
+        self.out_mlp = MLP(1024, 128, 128)
 
     def forward(self, x):
         x = F.relu(self.in_conv(x))
         for hidden_layer in self.hidden_conv:
             x = F.relu(hidden_layer(x))
-        x = F.relu(self.out_conv(x)).flatten(-2, -1)
+        x = F.relu(self.out_conv(x)).flatten(-3, -1)
         x = self.out_mlp(x)
+        return x
         

@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from models.modules import MLP
+from models.modules import MLP, CNNEncoder, CNNResidualDecoder
 
 class VRNN(nn.Module):
     def __init__(self, input_dim, hidden_dim, latent_dim, input_type='base', decoder='LSTM'):
@@ -11,8 +11,8 @@ class VRNN(nn.Module):
         self.prior = MLP(self.hidden_dim, self.hidden_dim, self.latent_dim*2)
         self.input_type = input_type
         if input_type=='visual':
-            self.embedder_x = None
-            self.decoder = None
+            self.embedder_x = CNNEncoder(self.input_dim, self.latent_dim, 4)
+            self.decoder = CNNResidualDecoder()
         else:
             self.embedder_x = MLP(self.input_dim, self.hidden_dim, self.hidden_dim)
             self.decoder = MLP(self.hidden_dim*2, self.hidden_dim, self.input_dim*2)
@@ -46,7 +46,7 @@ class VRNN(nn.Module):
     def _decode(self, z, h_prev, c_prev=None):
         embed_z = self.embedder_z(z)
         decoder_in = torch.cat([embed_z, h_prev], dim=-1)
-        if not self.input_type == "visual":
+        if self.input_type == 'base':
             (x_mu, x_log_var) = self.decoder(decoder_in).split(self.input_dim, dim=-1)
             eps = torch.normal(mean=torch.zeros_like(x_mu)).to(z.device)
             # Cap std to 100 for stability
@@ -55,6 +55,7 @@ class VRNN(nn.Module):
         else:
             x_mu = None
             x_log_var = None
+            print(decoder_in.size())
             x = self.decoder(decoder_in)
         input = torch.cat([self.embedder_x(x), embed_z], dim=-1)
         h, c = self.hidden_decoder(input, (h_prev, c_prev))
@@ -69,7 +70,7 @@ class VRNN(nn.Module):
         return sample
 
     def forward(self, x):
-        b, seq_len, _ = x.size()
+        b, seq_len, *_ = x.size()
         h_prev = torch.zeros((b, self.hidden_dim)).to(x.device)
         c_prev = torch.zeros((b, self.hidden_dim)).to(x.device)
         reconstr_seq = torch.zeros_like(x).to(x.device)
@@ -88,7 +89,8 @@ class VRNN(nn.Module):
             reconstr_seq[:, i, :] = x_hat
             z_params[:, i, 0, :] = z_mu
             z_params[:, i, 1, :] = z_log_var
-            x_params[:, i, 0, :] = x_hat_mu
-            x_params[:, i, 1, :] = x_hat_log_var
+            if input == 'base':
+                x_params[:, i, 0, :] = x_hat_mu
+                x_params[:, i, 1, :] = x_hat_log_var
 
-        return reconstr_seq, z_params, x_params
+        return reconstr_seq, z_params, None
