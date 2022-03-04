@@ -15,9 +15,39 @@ import numpy as np
 
 from pymunk import Vec2d
 import os
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt, animation
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"
+
+def visualize_rollout(rollout, interval=50, show_step=False, save=False):
+    """Visualization for a single sample rollout of a physical system.
+    Args:
+        rollout (numpy.ndarray): Numpy array containing the sequence of images. It's shape must be
+            (seq_len, height, width, channels).
+        interval (int): Delay between frames (in millisec).
+        show_step (bool): Whether to draw the step number in the image
+    """
+    fig = plt.figure()
+    img = []
+    for i, im in enumerate(rollout):
+        if show_step:
+            black_img = np.zeros(list(im.shape))
+            cv2.putText(
+                black_img, str(i), (0, 30), fontScale=0.22, color=(255, 255, 255), thickness=1,
+                fontFace=cv2.LINE_AA)
+            res_img = (im + black_img / 255.) / 2
+        else:
+            res_img = im
+        img.append([plt.imshow(res_img, animated=True)])
+    ani = animation.ArtistAnimation(fig,
+                                    img,
+                                    interval=interval,
+                                    blit=True,
+                                    repeat_delay=100)
+    if save:
+        writergif = animation.PillowWriter(fps=30)
+        ani.save('dataloaders/bouncing_sequence.gif', writergif)
+    plt.show()
 
 class BouncingBall2D(object):
     """
@@ -78,7 +108,7 @@ class BouncingBall2D(object):
             string_image = pygame.image.tostring(self._screen, 'RGB')
             temp_surf = pygame.image.fromstring(string_image,(256, 256),'RGB' )
             tmp_arr = pygame.surfarray.array3d(temp_surf)
-            image = cv2.resize(tmp_arr, dsize=(64, 64))
+            image = cv2.resize(tmp_arr, dsize=(32, 32))
             image_seq.append(image)
         positions = np.array(positions)
         image_seq = np.array(image_seq)
@@ -177,5 +207,4 @@ if __name__ == "__main__":
         print(positions.shape)
         print(images.shape)
         np.save('positions.npy', positions)
-        plt.imshow(images[0])
-        plt.show()
+        visualize_rollout(images)
