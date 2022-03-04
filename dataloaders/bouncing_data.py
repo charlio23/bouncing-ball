@@ -25,7 +25,7 @@ class BouncingBallDataLoader(Dataset):
         if not self.images:
             sample = sample[:,:2]/128.0 - 1.0
         else:
-            sample = sample.transpose((0,3,1,2))
+            sample = sample.transpose((0,3,1,2))/255.0
         return sample
 
 
