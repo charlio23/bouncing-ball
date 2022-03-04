@@ -76,7 +76,6 @@ class CNNResidualDecoder(nn.Module):
         for residual_layer in self.residual_blocks:
             x = residual_layer(x)
         x = torch.sigmoid(self.out_conv(x))
-        print(x.size())
         return x
 
 class CNNEncoder(nn.Module):

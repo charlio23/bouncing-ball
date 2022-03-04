@@ -52,7 +52,6 @@ def main():
 
             # Forward sample to network
             var = Variable(sample.float(), requires_grad=True).to(device)
-            print(var.size())
             optimizer.zero_grad()
             reconstr_seq, z_params, x_params = vrnn(var)
             # Compute loss and optimize params
