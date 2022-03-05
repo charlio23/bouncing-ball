@@ -56,7 +56,7 @@ def main():
 
     # Train Loop
     vae.train()
-    for epoch in range(1, args.epoch):
+    for epoch in range(1, args.epochs):
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
