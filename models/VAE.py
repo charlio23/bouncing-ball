@@ -20,7 +20,7 @@ class ImageVAE(nn.Module):
                 m.bias.data.fill_(0.1)
 
     def _encode(self, x):
-        (z_mu, z_log_var) = self.encoder(x).split(self.latent_dim, dim=-1)
+        (z_mu, z_log_var) = self.encoder(x).split(self.latent_dim//2, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
         z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(x.device))
         sample = z_mu + z_std*eps

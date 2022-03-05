@@ -1,4 +1,5 @@
 # Imports
+import argparse
 import os
 import time
 
@@ -16,6 +17,13 @@ from dataloaders.bouncing_data import BouncingBallDataLoader
 from utils.losses import kld_loss, nll_gaussian
 from models.VRNN import VRNN
 
+parser = argparse.ArgumentParser(description='VRNN trainer')
+
+parser.add_argument('--name', required=True, type=str, help='Name of the experiment')
+parser.add_argument('--train_root', default='/dataset/train', type=str)
+parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number of total epochs to run')
+parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
+
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
 
@@ -24,14 +32,17 @@ def save_checkpoint(state, filename='model'):
     torch.save(state, "stored_models/" + filename + '_latest.pth.tar')
 
 def main():
+    global args, writer
+    args = parser.parse_args()
+    writer = SummaryWriter(log_dir=os.path.join("runs", args.name))
+    print(args)
     input_type = 'visual'
     # Set up writers and device
-    writer = SummaryWriter(log_dir=os.path.join('runs', 'vrnn_visual'))
     device = get_device()
     print("=> Using device: " + device)
     # Load dataset
-    dl = BouncingBallDataLoader('datasets/bouncing_ball/train', images=True)
-    train_loader = DataLoader(dl, batch_size=128, shuffle=True)
+    dl = BouncingBallDataLoader(args.train_root, images=True)
+    train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
     sample = next(iter(train_loader)).float()
     _, _, input_dim, *_ = sample.size()
 
@@ -45,7 +56,7 @@ def main():
 
     # Train Loop
     vrnn.train()
-    for epoch in range(1, 500):
+    for epoch in range(1, args.epochs):
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):

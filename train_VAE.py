@@ -1,4 +1,5 @@
 # Imports
+import argparse
 import os
 import time
 
@@ -16,6 +17,14 @@ from dataloaders.bouncing_data import BouncingBallDataLoader
 from utils.losses import kld_loss, nll_gaussian
 from models.VAE import ImageVAE
 
+
+parser = argparse.ArgumentParser(description='Image VAE trainer')
+
+parser.add_argument('--name', required=True, type=str, help='Name of the experiment')
+parser.add_argument('--train_root', default='/dataset/train', type=str)
+parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number of total epochs to run')
+parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
+
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
 
@@ -24,19 +33,22 @@ def save_checkpoint(state, filename='model'):
     torch.save(state, "stored_models/" + filename + '_latest.pth.tar')
 
 def main():
+    global args, writer
+    args = parser.parse_args()
+    writer = SummaryWriter(log_dir=os.path.join("runs", args.name))
+    print(args)
     # Set up writers and device
-    writer = SummaryWriter(log_dir=os.path.join('runs', 'vrnn_visual'))
     device = get_device()
     print("=> Using device: " + device)
     # Load dataset
-    dl = BouncingBallDataLoader('datasets/bouncing_ball_32/train', images=True)
-    train_loader = DataLoader(dl, batch_size=2, shuffle=True)
+    dl = BouncingBallDataLoader(args.train_root, images=True)
+    train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
     sample = next(iter(train_loader)).float()
     _, _, input_dim, *_ = sample.size()
 
     # Load model
 
-    vae = ImageVAE(input_dim, 128, 32, input_type='visual').float().to(device)
+    vae = ImageVAE(input_dim, 128, 32).float().to(device)
     print(vae)
 
     # Set up optimizers
@@ -44,7 +56,7 @@ def main():
 
     # Train Loop
     vae.train()
-    for epoch in range(1, 500):
+    for epoch in range(1, args.epoch):
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
@@ -56,7 +68,6 @@ def main():
             optimizer.zero_grad()
             x_hat, z_mu, z_log_var = vae(var)
             # Compute loss and optimize params
-            b, seq_len, dim, *_ = var.size()
             kld = kld_loss(z_mu, z_log_var)
             mse = F.mse_loss(x_hat, var, reduction='sum')/(b)
             loss = kld + mse
