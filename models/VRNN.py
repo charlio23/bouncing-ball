@@ -11,7 +11,7 @@ class VRNN(nn.Module):
         self.prior = MLP(self.hidden_dim, self.hidden_dim, self.latent_dim*2)
         self.input_type = input_type
         if input_type=='visual':
-            self.embedder_x = CNNEncoder(self.input_dim, self.latent_dim, 4)
+            self.embedder_x = CNNEncoder(self.input_dim, self.hidden_dim, 4)
             self.decoder = CNNResidualDecoder()
         else:
             self.embedder_x = MLP(self.input_dim, self.hidden_dim, self.hidden_dim)

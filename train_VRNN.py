@@ -11,6 +11,7 @@ import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.optim import Adam
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 
 from dataloaders.bouncing_data import BouncingBallDataLoader
@@ -29,7 +30,7 @@ def get_device(cuda=True):
 
 def save_checkpoint(state, filename='model'):
     os.makedirs("stored_models/", exist_ok=True)
-    torch.save(state, "stored_models/" + filename + '_latest.pth.tar')
+    torch.save(state, "/data2/users/cb221/stored_models/" + filename + '_latest.pth.tar')
 
 def main():
     global args, writer
@@ -48,11 +49,13 @@ def main():
 
     # Load model
 
-    vrnn = VRNN(input_dim, 128, 32, input_type='visual').float().to(device)
+    vrnn = VRNN(input_dim, 128, 64, input_type='visual').float().to(device)
     print(vrnn)
 
     # Set up optimizers
-    optimizer = Adam(vrnn.parameters(), lr=1e-5)
+    optimizer = Adam(vrnn.parameters(), lr=2e-3)
+    gamma = 0.5
+    scheduler = StepLR(optimizer, step_size=200, gamma=gamma)
 
     # Train Loop
     vrnn.train()
@@ -62,7 +65,7 @@ def main():
         for i, sample in enumerate(train_loader, 1):
 
             # Forward sample to network
-            var = Variable(sample.float(), requires_grad=True).to(device)
+            var = Variable(sample[:,:30].float(), requires_grad=True).to(device)
             optimizer.zero_grad()
             reconstr_seq, z_params, x_params = vrnn(var)
             # Compute loss and optimize params
@@ -91,7 +94,12 @@ def main():
                 writer.add_scalar('data/mse_loss', mse, i + epoch*len(train_loader))
                 writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
-
+            if i % 100 == 0:
+                video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
+                video_tensor_true = sample.float().detach().cpu()
+                writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
+                writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
+        scheduler.step()
         save_checkpoint({
             'epoch': epoch,
             'vrnn': vrnn.state_dict()

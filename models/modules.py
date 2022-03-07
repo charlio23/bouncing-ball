@@ -58,7 +58,7 @@ class ResidualBlock(nn.Module):
 class CNNResidualDecoder(nn.Module):
     def __init__(self):
         super(CNNResidualDecoder, self).__init__()
-        self.first_mlp = MLP(16, 32, 16)
+        self.first_mlp = MLP(256, 256, 256)
         self.first_block = ResidualBlock(input_channels=1)
         self.residual_blocks = nn.ModuleList([
             ResidualBlock(input_channels=64)
@@ -71,7 +71,7 @@ class CNNResidualDecoder(nn.Module):
 
     def forward(self, x):
         b, *_ = x.size()
-        x = self.first_mlp(x).reshape((b, 1, 4, 4))
+        x = self.first_mlp(x).reshape((b, 1, 16, 16))
         x = self.first_block(x)
         for residual_layer in self.residual_blocks:
             x = residual_layer(x)
