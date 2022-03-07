@@ -29,13 +29,13 @@ def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
 
 def save_checkpoint(state, filename='model'):
-    os.makedirs("stored_models/", exist_ok=True)
+    os.makedirs("/data2/users/cb221/stored_models/", exist_ok=True)
     torch.save(state, "/data2/users/cb221/stored_models/" + filename + '_latest.pth.tar')
 
 def main():
     global args, writer
     args = parser.parse_args()
-    writer = SummaryWriter(log_dir=os.path.join("runs", args.name))
+    writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs", args.name))
     print(args)
     input_type = 'visual'
     # Set up writers and device
@@ -63,13 +63,12 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-
+            b, seq_len, C, H, W = sample.size()
             # Forward sample to network
             var = Variable(sample[:,:30].float(), requires_grad=True).to(device)
             optimizer.zero_grad()
             reconstr_seq, z_params, x_params = vrnn(var)
             # Compute loss and optimize params
-            b, seq_len, dim = var.size()
             kld = kld_loss(z_params[:,:,0,:], z_params[:,:,1,:])
             mse = F.mse_loss(reconstr_seq, var, reduction='sum')/(b)
             loss = kld
