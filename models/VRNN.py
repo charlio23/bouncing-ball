@@ -56,7 +56,6 @@ class VRNN(nn.Module):
             x_mu = None
             x_log_var = None
             x = self.decoder(decoder_in)
-        print(x.size())
         input = torch.cat([self.embedder_x(x), embed_z], dim=-1)
         h, c = self.hidden_decoder(input, (h_prev, c_prev))
         return x, x_mu, x_log_var, h, c
