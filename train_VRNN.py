@@ -24,6 +24,8 @@ parser.add_argument('--name', required=True, type=str, help='Name of the experim
 parser.add_argument('--train_root', default='/dataset/train', type=str)
 parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
+parser.add_argument('--beta', default=1, type=int,metavar='N', help='beta VAE param')
+
 
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
@@ -42,14 +44,14 @@ def main():
     device = get_device()
     print("=> Using device: " + device)
     # Load dataset
-    dl = BouncingBallDataLoader(args.train_root, images=True)
+    dl = BouncingBallDataLoader(args.train_root, images=False)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
     sample = next(iter(train_loader)).float()
     _, _, input_dim, *_ = sample.size()
 
     # Load model
 
-    vrnn = VRNN(input_dim, 128, 64, input_type='visual').float().to(device)
+    vrnn = VRNN(input_dim, 128, 64, input_type='base').float().to(device)
     print(vrnn)
 
     # Set up optimizers
@@ -63,15 +65,14 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-            sample = sample[:,:30]
-            b, seq_len, C, H, W = sample.size()
+            sample = sample[:,:]
             # Forward sample to network
             var = Variable(sample.float(), requires_grad=True).to(device)
             optimizer.zero_grad()
             reconstr_seq, z_params, x_params = vrnn(var)
             # Compute loss and optimize params
-            kld = kld_loss(z_params[:,:,0,:], z_params[:,:,1,:])
-            mse = F.mse_loss(reconstr_seq, var, reduction='sum')/(b)
+            kld = args.beta*kld_loss(z_params[:,:,0,:], z_params[:,:,1,:])
+            mse = F.mse_loss(reconstr_seq, var, reduction='sum')/(args.batch_size)
             loss = kld
             if input_type == 'visual':
                 loss += mse
@@ -94,7 +95,8 @@ def main():
                 writer.add_scalar('data/mse_loss', mse, i + epoch*len(train_loader))
                 writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
-            if i % 100 == 0:
+            if i % 100 == 0 and False:
+                b, seq_len, C, H, W = sample.size()
                 video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
                 video_tensor_true = sample.float().detach().cpu()
                 writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
