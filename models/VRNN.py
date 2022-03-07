@@ -61,7 +61,7 @@ class VRNN(nn.Module):
         return x, x_mu, x_log_var, h, c
 
     def _sample(self, h):
-        z_mu, z_log_var = self.prior(h)
+        z_mu, z_log_var = self.prior(h).split(self.latent_dim, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(h.device)
         # Cap std to 100 for stability
         z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(h.device))
