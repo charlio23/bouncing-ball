@@ -43,7 +43,7 @@ def main():
     print("=> Using device: " + device)
     # Load dataset
     dl = BouncingBallDataLoader(args.train_root, images=True)
-    train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
+    train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
     sample = next(iter(train_loader)).float()
     _, _, input_dim, *_ = sample.size()
 
@@ -53,9 +53,9 @@ def main():
     print(vrnn)
 
     # Set up optimizers
-    optimizer = Adam(vrnn.parameters(), lr=2e-3)
+    optimizer = Adam(vrnn.parameters(), lr=1e-3)
     gamma = 0.5
-    scheduler = StepLR(optimizer, step_size=200, gamma=gamma)
+    scheduler = StepLR(optimizer, step_size=100, gamma=gamma)
 
     # Train Loop
     vrnn.train()
@@ -95,7 +95,7 @@ def main():
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
             if i % 100 == 0:
                 video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
-                video_tensor_true = sample.float().detach().cpu()
+                video_tensor_true = sample[:,:30].float().detach().cpu()
                 writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
         scheduler.step()
