@@ -63,9 +63,10 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
+            sample = sample[:,:30]
             b, seq_len, C, H, W = sample.size()
             # Forward sample to network
-            var = Variable(sample[:,:30].float(), requires_grad=True).to(device)
+            var = Variable(sample.float(), requires_grad=True).to(device)
             optimizer.zero_grad()
             reconstr_seq, z_params, x_params = vrnn(var)
             # Compute loss and optimize params
@@ -95,7 +96,7 @@ def main():
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
             if i % 100 == 0:
                 video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
-                video_tensor_true = sample[:,:30].float().detach().cpu()
+                video_tensor_true = sample.float().detach().cpu()
                 writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
         scheduler.step()
