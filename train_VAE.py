@@ -29,13 +29,13 @@ def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
 
 def save_checkpoint(state, filename='model'):
-    os.makedirs("stored_models/", exist_ok=True)
-    torch.save(state, "stored_models/" + filename + '_latest.pth.tar')
+    os.makedirs("/data2/users/cb221/stored_models/", exist_ok=True)
+    torch.save(state, "/data2/users/cb221/stored_models/" + filename + '_latest.pth.tar')
 
 def main():
     global args, writer
     args = parser.parse_args()
-    writer = SummaryWriter(log_dir=os.path.join("runs", args.name))
+    writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs/", args.name))
     print(args)
     # Set up writers and device
     device = get_device()
