@@ -48,7 +48,7 @@ def main():
 
     # Load model
 
-    vae = ImageVAE(input_dim, 128, 32).float().to(device)
+    vae = ImageVAE(input_dim, 128, 128).float().to(device)
     print(vae)
 
     # Set up optimizers
