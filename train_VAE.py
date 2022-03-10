@@ -12,6 +12,7 @@ import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.optim import Adam
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 
 from dataloaders.bouncing_data import BouncingBallDataLoader
@@ -27,6 +28,9 @@ parser.add_argument('--runs_path', default='./runs', type=str)
 parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--determ', action='store_true', help='Use VAE or deterministic AE')
+parser.add_argument('--lr', default=5e-4, type=float, metavar='N', help='learning rate')
+parser.add_argument('--latent_dim', default=32, type=int, metavar='N', help='dimension of latent space')
+
 
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
@@ -51,11 +55,13 @@ def main():
     variational = not args.determ
     # Load model
 
-    vae = ImageVAE(input_dim, 128, 32).float().to(device)
+    vae = ImageVAE(input_dim, 128, args.latent_dim).float().to(device)
     print(vae)
 
     # Set up optimizers
-    optimizer = Adam(vae.parameters(), lr=1e-5)
+    optimizer = Adam(vae.parameters(), lr=args.lr)
+    gamma = 0.5
+    scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
 
     # Train Loop
     vae.train()
@@ -91,12 +97,13 @@ def main():
                     'Loss {loss:.4e}\t MSE: {mse:.4e}'.format(
                     epoch, i, len(train_loader), batch_time=batch_time, loss=loss, mse=mse))
                 writer.add_scalar('data/mse_loss', mse, i + epoch*len(train_loader))
-                writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
+                if variational:
+                    writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
             if i % 100 == 0:
                 writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
-
+        scheduler.step()
         save_checkpoint({
             'epoch': epoch,
             'vae': vae.state_dict()
