@@ -56,10 +56,11 @@ class ResidualBlock(nn.Module):
 
 
 class CNNResidualDecoder(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_dim):
         super(CNNResidualDecoder, self).__init__()
-        self.first_mlp = MLP(64, 128, 64*4*4)
-        self.first_block = ResidualBlock(input_channels=64)
+        self.latent_dim = latent_dim
+        self.first_mlp = MLP(latent_dim, 128, latent_dim*4*4)
+        self.first_block = ResidualBlock(input_channels=latent_dim)
         self.residual_blocks = nn.ModuleList([
             ResidualBlock(input_channels=64)
         for i in range(2)])
@@ -98,13 +99,14 @@ class CNNEncoder(nn.Module):
                                  kernel_size=4,
                                  stride=2,
                                  padding=1)
-        self.out_mlp = MLP(256, 128, output_dim)
+        self.out_mean = MLP(256, 128, output_dim)
+        self.out_log_var = MLP(256, 128, output_dim)
 
     def forward(self, x):
         x = F.relu(self.in_conv(x))
         for hidden_layer in self.hidden_conv:
             x = F.relu(hidden_layer(x))
         x = F.relu(self.out_conv(x)).flatten(-3, -1)
-        x = self.out_mlp(x)
-        return x
+        mean, log_var = self.out_mean(x), self.out_log_var(x)
+        return mean, log_var
         

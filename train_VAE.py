@@ -49,7 +49,7 @@ def main():
 
     # Load model
 
-    vae = ImageVAE(input_dim, 128, 128).float().to(device)
+    vae = ImageVAE(input_dim, 128, 32).float().to(device)
     print(vae)
 
     # Set up optimizers
@@ -89,6 +89,7 @@ def main():
                 writer.add_scalar('data/mse_loss', mse, i + epoch*len(train_loader))
                 writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
+            if i % 100 == 0:
                 writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
 

@@ -8,9 +8,8 @@ class ImageVAE(nn.Module):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
-        self.prior = MLP(self.hidden_dim, self.hidden_dim, self.latent_dim*2)
         self.encoder = CNNEncoder(self.input_dim, self.latent_dim, 4)
-        self.decoder = CNNResidualDecoder()
+        self.decoder = CNNResidualDecoder(self.latent_dim)
         self._init_weights()
 
     def _init_weights(self):
@@ -20,7 +19,7 @@ class ImageVAE(nn.Module):
                 m.bias.data.fill_(0.1)
 
     def _encode(self, x):
-        (z_mu, z_log_var) = self.encoder(x).split(self.latent_dim//2, dim=-1)
+        (z_mu, z_log_var) = self.encoder(x)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
         z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(x.device))
         sample = z_mu + z_std*eps
