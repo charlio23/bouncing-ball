@@ -21,7 +21,8 @@ from models.VAE import ImageVAE
 parser = argparse.ArgumentParser(description='Image VAE trainer')
 
 parser.add_argument('--name', required=True, type=str, help='Name of the experiment')
-parser.add_argument('--train_root', default='/dataset/train', type=str)
+parser.add_argument('--train_root', default='./dataset/train', type=str)
+parser.add_argument('--runs_path', default='./runs', type=str)
 parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
 
@@ -35,7 +36,7 @@ def save_checkpoint(state, filename='model'):
 def main():
     global args, writer
     args = parser.parse_args()
-    writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs/", args.name))
+    writer = SummaryWriter(log_dir=os.path.join(args.runs_path, args.name))
     print(args)
     # Set up writers and device
     device = get_device()
@@ -56,7 +57,7 @@ def main():
 
     # Train Loop
     vae.train()
-    for epoch in range(1, args.epochs):
+    for epoch in range(0, args.epochs):
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):

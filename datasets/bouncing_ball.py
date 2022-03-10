@@ -10,7 +10,7 @@ import cv2
 import pymunk
 import pymunk.pygame_util
 
-from datasets.util import to_convex_contour, calculate_midpoint
+from util import to_convex_contour, calculate_midpoint
 import numpy as np
 
 from pymunk import Vec2d
@@ -161,7 +161,7 @@ class BouncingBall2D(object):
         Create a ball.
         :return:
         """
-        radius = 15
+        radius = 25
         body = pymunk.Body()
         x = random.randint(100, 200)
         body.position = x, 128
@@ -191,7 +191,7 @@ class BouncingBall2D(object):
 
     def draw(self):
             self._screen.fill(pygame.Color(150, 150, 150))
-            pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 15)
+            pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 25)
             # Draw the static lines.
             for line in self.static_lines:
                 pygame.draw.lines(self._screen, pygame.Color('black'), False, (line.a,line.b), 8)
