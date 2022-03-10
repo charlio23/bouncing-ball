@@ -10,7 +10,7 @@ import cv2
 import pymunk
 import pymunk.pygame_util
 
-from util import to_convex_contour, calculate_midpoint
+from datasets.util import to_convex_contour, calculate_midpoint
 import numpy as np
 
 from pymunk import Vec2d
