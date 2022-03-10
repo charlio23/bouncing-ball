@@ -1,5 +1,6 @@
 # Imports
 import argparse
+from ast import arg
 import os
 import time
 
@@ -25,6 +26,7 @@ parser.add_argument('--train_root', default='./dataset/train', type=str)
 parser.add_argument('--runs_path', default='./runs', type=str)
 parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
+parser.add_argument('--determ', action='store_true', help='Use VAE or deterministic AE')
 
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
@@ -46,7 +48,7 @@ def main():
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
     sample = next(iter(train_loader)).float()
     _, _, input_dim, *_ = sample.size()
-
+    variational = not args.determ
     # Load model
 
     vae = ImageVAE(input_dim, 128, 32).float().to(device)
@@ -67,11 +69,13 @@ def main():
             sample_in = sample.float().reshape((b*seq_len, C, H, W))
             var = Variable(sample_in, requires_grad=True).to(device)
             optimizer.zero_grad()
-            x_hat, z_mu, z_log_var = vae(var)
+            x_hat, z_mu, z_log_var = vae(var, variational=variational)
             # Compute loss and optimize params
-            kld = kld_loss(z_mu, z_log_var)
             mse = F.mse_loss(x_hat, var, reduction='sum')/(b)
-            loss = kld + mse
+            loss = mse
+            if variational:
+                kld = kld_loss(z_mu, z_log_var)
+                loss += kld
             loss.backward()
             optimizer.step()
             

@@ -18,11 +18,13 @@ class ImageVAE(nn.Module):
                 nn.init.xavier_normal_(m.weight.data)
                 m.bias.data.fill_(0.1)
 
-    def _encode(self, x):
+    def _encode(self, x, variational=True):
         (z_mu, z_log_var) = self.encoder(x)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
         z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(x.device))
-        sample = z_mu + z_std*eps
+        sample = z_mu
+        if variational:
+            sample += z_std*eps
         return sample, z_mu, z_log_var
 
     def _decode(self, z):
@@ -33,8 +35,8 @@ class ImageVAE(nn.Module):
         eps = torch.normal(mean=torch.zeros(size))
         return self._decode(eps)
 
-    def forward(self, x):
+    def forward(self, x, variational=True):
         # Autoencode
-        z, z_mu, z_log_var = self._encode(x)
+        z, z_mu, z_log_var = self._encode(x, variational)
         x_hat = self._decode(z)
         return x_hat, z_mu, z_log_var
