@@ -24,7 +24,9 @@ parser.add_argument('--name', required=True, type=str, help='Name of the experim
 parser.add_argument('--train_root', default='/dataset/train', type=str)
 parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
-parser.add_argument('--beta', default=1, type=int,metavar='N', help='beta VAE param')
+parser.add_argument('--beta', default=1, type=float,metavar='N', help='beta VAE param')
+parser.add_argument('--lr', default=1e-4, type=float, metavar='N', help='learning rate')
+parser.add_argument('--latent_dim', default=32, type=int, metavar='N', help='dimension of latent space')
 
 
 def get_device(cuda=True):
@@ -39,46 +41,37 @@ def main():
     args = parser.parse_args()
     writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs", args.name))
     print(args)
-    input_type = 'visual'
     # Set up writers and device
     device = get_device()
     print("=> Using device: " + device)
     # Load dataset
     dl = BouncingBallDataLoader(args.train_root, images=False)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    sample = next(iter(train_loader)).float()
-    _, _, input_dim, *_ = sample.size()
-
     # Load model
-
-    vrnn = VRNN(input_dim, 128, 64, input_type='base').float().to(device)
+    vrnn = VRNN(3, 2, args.latent_dim, args.latent_dim, input_type='base').float().to(device)
     print(vrnn)
 
     # Set up optimizers
-    optimizer = Adam(vrnn.parameters(), lr=1e-3)
+    optimizer = Adam(vrnn.parameters(), lr=args.lr)
     gamma = 0.5
-    scheduler = StepLR(optimizer, step_size=100, gamma=gamma)
+    scheduler = StepLR(optimizer, step_size=20, gamma=gamma)
 
     # Train Loop
     vrnn.train()
-    for epoch in range(1, args.epochs):
+    for epoch in range(0, args.epochs):
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-            sample = sample[:,:]
+            im, pos = sample
             # Forward sample to network
-            var = Variable(sample.float(), requires_grad=True).to(device)
+            var_im = Variable(im.float(), requires_grad=True).to(device)
+            var_pos = Variable(pos.float(), requires_grad=True).to(device)
             optimizer.zero_grad()
-            reconstr_seq, z_params, x_params = vrnn(var)
+            reconstr_seq, z_params, z_params_prior = vrnn(var_im, var_pos)
             # Compute loss and optimize params
-            kld = args.beta*kld_loss(z_params[:,:,0,:], z_params[:,:,1,:])
-            mse = F.mse_loss(reconstr_seq, var, reduction='sum')/(args.batch_size)
-            loss = kld
-            if input_type == 'visual':
-                loss += mse
-            else:
-                nll = nll_gaussian(x_params[:,:,0,:], x_params[:,:,1,:], var)
-                loss += nll
+            kld = args.beta*kld_loss(z_params[:,:,0,:], z_params[:,:,1,:], z_params_prior[:,:,0,:], z_params_prior[:,:,1,:])
+            mse = F.mse_loss(reconstr_seq, var_pos, reduction='sum')/(args.batch_size)
+            loss = args.beta*kld + mse
             loss.backward()
             optimizer.step()
             
@@ -96,16 +89,16 @@ def main():
                 writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
             if i % 100 == 0 and False:
-                b, seq_len, C, H, W = sample.size()
-                video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
-                video_tensor_true = sample.float().detach().cpu()
-                writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
+                #b, seq_len, C, H, W = sample.size()
+                #video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
+                video_tensor_true = im.float().detach().cpu()
+                #writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
         scheduler.step()
         save_checkpoint({
             'epoch': epoch,
             'vrnn': vrnn.state_dict()
-        }, filename='VRNN_visual')
+        }, filename=args.name)
 
 
 if __name__=="__main__":

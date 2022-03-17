@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
-from models.modules import MLP, CNNEncoder, CNNResidualDecoder
+from models.modules import MLP, CNNEncoder, CNNEncoderPosition, CNNResidualDecoder
 
 class VRNN(nn.Module):
-    def __init__(self, input_dim, hidden_dim, latent_dim, input_type='base', decoder='LSTM'):
+    def __init__(self, input_dim, input_pos, hidden_dim, latent_dim, input_type='base', decoder='LSTM'):
         super(VRNN, self).__init__()
         self.input_dim = input_dim
+        self.input_pos = input_pos
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
         self.prior = MLP(self.hidden_dim, self.hidden_dim, self.latent_dim*2)
@@ -14,8 +15,8 @@ class VRNN(nn.Module):
             self.embedder_x = CNNEncoder(self.input_dim, self.hidden_dim, 4)
             self.decoder = CNNResidualDecoder()
         else:
-            self.embedder_x = MLP(self.input_dim, self.hidden_dim, self.hidden_dim)
-            self.decoder = MLP(self.hidden_dim*2, self.hidden_dim, self.input_dim*2)
+            self.embedder_x = CNNEncoderPosition(self.input_dim, input_pos, self.hidden_dim, 4)
+            self.decoder = MLP(self.hidden_dim*2, self.hidden_dim, input_pos)
         self.encoder = MLP(self.hidden_dim*2, self.hidden_dim, self.latent_dim*2)
         self.embedder_z = MLP(self.latent_dim, self.hidden_dim, self.hidden_dim)
         if decoder=='vainilla':
@@ -35,61 +36,56 @@ class VRNN(nn.Module):
                 nn.init.xavier_normal_(m.weight.data)
                 m.bias.data.fill_(0.1)
 
-    def _inference(self, x, h):
-        encoder_in = torch.cat([self.embedder_x(x), h], dim=-1)
+    def _inference(self, x, pos, h):
+        encoder_in = torch.cat([self.embedder_x(x, pos), h], dim=-1)
         (z_mu, z_log_var) = self.encoder(encoder_in).split(self.latent_dim, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
         z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(h.device))
         sample = z_mu + z_std*eps
         return sample, z_mu, z_log_var
 
-    def _decode(self, z, h_prev, c_prev=None):
+    def _decode(self, z, im, h_prev, c_prev=None):
         embed_z = self.embedder_z(z)
         decoder_in = torch.cat([embed_z, h_prev], dim=-1)
-        if self.input_type == 'base':
-            (x_mu, x_log_var) = self.decoder(decoder_in).split(self.input_dim, dim=-1)
-            eps = torch.normal(mean=torch.zeros_like(x_mu)).to(z.device)
-            # Cap std to 100 for stability
-            x_std = torch.minimum((x_log_var*0.5).exp(), torch.FloatTensor([100.]).to(z.device))
-            x = x_mu + x_std*eps
-        else:
-            x_mu = None
-            x_log_var = None
-            x = self.decoder(decoder_in)
-        input = torch.cat([self.embedder_x(x), embed_z], dim=-1)
+        pos = self.decoder(decoder_in)
+        input = torch.cat([self.embedder_x(im, pos), embed_z], dim=-1)
         h, c = self.hidden_decoder(input, (h_prev, c_prev))
-        return x, x_mu, x_log_var, h, c
+        return pos, h, c
 
-    def _sample(self, h):
+    def _prior(self, h):
         (z_mu, z_log_var) = self.prior(h).split(self.latent_dim, dim=-1)
-        eps = torch.normal(mean=torch.zeros_like(z_mu)).to(h.device)
+        return z_mu, z_log_var
+
+    def _sample(self, z_mu, z_log_var):
+        eps = torch.normal(mean=torch.zeros_like(z_mu)).to(z_mu.device)
         # Cap std to 100 for stability
-        z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(h.device))
+        z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(z_mu.device))
         sample = z_mu + z_std*eps
         return sample
 
-    def forward(self, x):
-        b, seq_len, *_ = x.size()
-        h_prev = torch.zeros((b, self.hidden_dim)).to(x.device)
-        c_prev = torch.zeros((b, self.hidden_dim)).to(x.device)
-        reconstr_seq = torch.zeros_like(x).to(x.device)
+    def forward(self, im, pos=None):
+        b, seq_len, *_ = im.size()
+        h_prev = torch.zeros((b, self.hidden_dim)).to(im.device)
+        c_prev = torch.zeros((b, self.hidden_dim)).to(im.device)
+        reconstr_seq = torch.zeros_like(pos).to(im.device)
         sizes_z_params = [b, seq_len, 2, self.latent_dim]
-        z_params = torch.zeros(sizes_z_params).to(x.device)
-        sizes_x_params = [b, seq_len, 2, self.input_dim]
-        x_params = torch.zeros(sizes_x_params).to(x.device)
+        z_params = torch.zeros(sizes_z_params).to(im.device)
+        z_params_prior = torch.zeros(sizes_z_params).to(im.device)
         for i in range(seq_len):
-            last_x = x[:,i,:]
+
+            last_x = im[:,i,:]
+            last_pos = pos[:,i,:]
 
             # Autoencode
-            z, z_mu, z_log_var = self._inference(last_x, h_prev)
-            x_hat, x_hat_mu, x_hat_log_var, h_prev, c_prev = self._decode(z, h_prev, c_prev)
+            z, z_mu, z_log_var = self._inference(last_x, last_pos, h_prev)
+            z_mu_prior, z_log_var_prior = self._prior(h_prev)
+            pos_hat, h_prev, c_prev = self._decode(z, last_x, h_prev, c_prev)
 
             # Collect parameters
-            reconstr_seq[:, i, :] = x_hat
+            reconstr_seq[:, i, :] = pos_hat
             z_params[:, i, 0, :] = z_mu
             z_params[:, i, 1, :] = z_log_var
-            if input == 'base':
-                x_params[:, i, 0, :] = x_hat_mu
-                x_params[:, i, 1, :] = x_hat_log_var
+            z_params_prior[:, i, 0, :] = z_mu_prior
+            z_params_prior[:, i, 1, :] = z_log_var_prior
 
-        return reconstr_seq, z_params, None
+        return reconstr_seq, z_params, z_params_prior

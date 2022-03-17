@@ -164,7 +164,7 @@ class BouncingBall2D(object):
         Create a ball.
         :return:
         """
-        radius = 35
+        radius = 25
         body = pymunk.Body()
         x = random.randint(100, 200)
         body.position = x, 128
@@ -194,7 +194,7 @@ class BouncingBall2D(object):
 
     def draw(self):
             self._screen.fill(pygame.Color(150, 150, 150))
-            pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
+            #pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
             # Draw the static lines.
             for line in self.static_lines:
                 pygame.draw.lines(self._screen, pygame.Color('black'), False, (line.a,line.b), 8)

@@ -21,12 +21,12 @@ class BouncingBallDataLoader(Dataset):
 
     def __getitem__(self, i):
         sample = np.load(os.path.join(
-            self.root_dir, self.file_list[i]))[self.key]
-        if not self.images:
-            sample = sample[:,:2]/128.0 - 1.0
-        else:
-            sample = sample.transpose((0,3,1,2))/255.0
-        return sample
+            self.root_dir, self.file_list[i]))
+        pos = sample['positions']
+        pos = pos[:,:2]/128.0 - 1.0
+        im = sample['images']
+        im = im.transpose((0,3,1,2))/255.0
+        return im, pos
 
 
 def visualize_rollout(rollout, interval=50, show_step=False, save=False):

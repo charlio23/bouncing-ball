@@ -110,3 +110,36 @@ class CNNEncoder(nn.Module):
         mean, log_var = self.out_mean(x), self.out_log_var(x)
         return mean, log_var
         
+class CNNEncoderPosition(nn.Module):
+    def __init__(self, input_channels, n_in_pos, output_dim, num_layers):
+        super(CNNEncoderPosition, self).__init__()
+        self.in_conv = nn.Conv2d(in_channels=input_channels,
+                                 out_channels=16,
+                                 kernel_size=3,
+                                 stride=1,
+                                 padding=1)
+        self.hidden_conv = nn.ModuleList([
+            nn.Conv2d(in_channels=16,
+                      out_channels=16,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1)
+        for _ in range(num_layers)])
+        self.out_conv = nn.Conv2d(in_channels=16,
+                                 out_channels=1,
+                                 kernel_size=4,
+                                 stride=2,
+                                 padding=1)
+        self.out_mean = nn.Linear(256 + 32, output_dim)
+        self.pos_net = MLP(n_in_pos, 64, 32)
+        
+
+    def forward(self, x, pos):
+        x = F.relu(self.in_conv(x))
+        pos = F.relu(self.pos_net(pos))
+        for hidden_layer in self.hidden_conv:
+            x = F.relu(hidden_layer(x))
+        x = F.relu(self.out_conv(x)).flatten(-3, -1)
+        x = torch.cat([pos, x], dim=1)
+        mean = self.out_mean(x)
+        return mean
