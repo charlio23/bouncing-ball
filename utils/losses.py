@@ -1,6 +1,7 @@
-from statistics import variance
+from multiprocessing import reduction
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 def nll_gaussian(mu_x, log_var, target):
     eps = torch.FloatTensor([1e-6]).to(log_var.device)
@@ -22,3 +23,11 @@ def kld_loss(mu, log_var, mu_prior, log_var_prior, mean_reduction=True):
         return torch.mean(kld_per_sample, dim = 0)
     else:
         return kld_per_sample
+
+def mse_through_time(input, target, visual=True):
+    total_mse = F.mse_loss(input, target, reduction='none')
+    total_mse = total_mse.transpose(0,1)
+    if visual:
+        return torch.mean(total_mse, dim = (1,2,3,4))
+    else:
+        return torch.mean(total_mse, dim = (1,2))
