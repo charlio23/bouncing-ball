@@ -27,6 +27,8 @@ parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', hel
 parser.add_argument('--beta', default=1, type=float,metavar='N', help='beta VAE param')
 parser.add_argument('--lr', default=1e-4, type=float, metavar='N', help='learning rate')
 parser.add_argument('--latent_dim', default=32, type=int, metavar='N', help='dimension of latent space')
+parser.add_argument('--seq_len', default=50, type=int, metavar='N', help='length of input sequene')
+parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
 
 
 def get_device(cuda=True):
@@ -50,6 +52,9 @@ def main():
     # Load model
     vrnn = VRNN(3, 2, args.latent_dim, args.latent_dim, input_type='base').float().to(device)
     print(vrnn)
+    if args.load is not None:
+        vrnn.load_state_dict(torch.load(args.load)['vrnn'])
+        print("=> Model loaded successfully")
 
     # Set up optimizers
     optimizer = Adam(vrnn.parameters(), lr=args.lr)
@@ -62,7 +67,7 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-            im, pos = sample
+            im, pos = sample[0][:,:args.seq_len], sample[1][:,:args.seq_len]
             # Forward sample to network
             var_im = Variable(im.float(), requires_grad=True).to(device)
             var_pos = Variable(pos.float(), requires_grad=True).to(device)
@@ -88,6 +93,12 @@ def main():
                 writer.add_scalar('data/mse_loss', mse, i + epoch*len(train_loader))
                 writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
+                with torch.no_grad():
+                    pred_pos = vrnn.predict_sequence(var_im, var_pos)
+                    target_pos = sample[1][:,args.seq_len:].float().to(pred_pos.device)
+                    pred_mse = F.mse_loss(pred_pos, target_pos, reduction='sum')/(args.batch_size)
+                    writer.add_scalar('data/prediction_loss', pred_mse, i + epoch*len(train_loader))
+                
             if i % 100 == 0 and False:
                 #b, seq_len, C, H, W = sample.size()
                 #video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()

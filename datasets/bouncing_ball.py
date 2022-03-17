@@ -126,9 +126,13 @@ class BouncingBall2D(object):
         vertices = to_convex_contour(N)
         midpoint = calculate_midpoint(vertices)
         vertices = [[p[0] - midpoint[0] + 0.5, p[1] - midpoint[1] + 0.5] for p in vertices]
+        vertices = [(0, 0),
+                    (1, 0),
+                    (1, 1),
+                    (0, 1)]
         #print(vertices)
         #print(midpoint)
-        line_width = 2
+        line_width = 5
         static_body = self._space.static_body
         static_lines = [
             pymunk.Segment(static_body,
@@ -141,7 +145,7 @@ class BouncingBall2D(object):
                          (vertices[0][0]*255, vertices[0][1]*255),  line_width))
         for line in static_lines:
             line.elasticity = 1
-            line.color = (100, 100, 100, 255)
+            line.color = (0, 0, 0, 255)
         self._space.add(*static_lines)
         self.static_lines = static_lines
 
@@ -164,7 +168,7 @@ class BouncingBall2D(object):
         Create a ball.
         :return:
         """
-        radius = 25
+        radius = 35
         body = pymunk.Body()
         x = random.randint(100, 200)
         body.position = x, 128
@@ -194,10 +198,10 @@ class BouncingBall2D(object):
 
     def draw(self):
             self._screen.fill(pygame.Color(150, 150, 150))
-            #pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
+            pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
             # Draw the static lines.
             for line in self.static_lines:
-                pygame.draw.lines(self._screen, pygame.Color('black'), False, (line.a,line.b), 8)
+                pygame.draw.lines(self._screen, pygame.Color(0,0,0), False, (line.a,line.b), 10)
 
 
 
