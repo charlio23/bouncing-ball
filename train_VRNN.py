@@ -26,6 +26,7 @@ parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--beta', default=1, type=float,metavar='N', help='beta VAE param')
 parser.add_argument('--lr', default=1e-4, type=float, metavar='N', help='learning rate')
+parser.add_argument('--hidden_dim', default=32, type=int, metavar='N', help='dimension of hidden space')
 parser.add_argument('--latent_dim', default=32, type=int, metavar='N', help='dimension of latent space')
 parser.add_argument('--seq_len', default=50, type=int, metavar='N', help='length of input sequene')
 parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
@@ -50,7 +51,7 @@ def main():
     dl = BouncingBallDataLoader(args.train_root, images=False)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
     # Load model
-    vrnn = VRNN(3, 2, args.latent_dim, args.latent_dim, input_type='base').float().to(device)
+    vrnn = VRNN(3, 2, args.hidden_dim, args.latent_dim, num_rec_layers=3, input_type='base').float().to(device)
     print(vrnn)
     if args.load is not None:
         vrnn.load_state_dict(torch.load(args.load)['vrnn'])
@@ -59,7 +60,7 @@ def main():
     # Set up optimizers
     optimizer = Adam(vrnn.parameters(), lr=args.lr)
     gamma = 0.5
-    scheduler = StepLR(optimizer, step_size=20, gamma=gamma)
+    scheduler = StepLR(optimizer, step_size=30, gamma=gamma)
 
     # Train Loop
     vrnn.train()
@@ -67,12 +68,12 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-            im, pos = sample[0][:,:args.seq_len], sample[1][:,:args.seq_len]
+            _, pos = sample[0][:,:args.seq_len], sample[1][:,:args.seq_len]
             # Forward sample to network
-            var_im = Variable(im.float(), requires_grad=True).to(device)
+            #var_im = Variable(im.float(), requires_grad=True).to(device)
             var_pos = Variable(pos.float(), requires_grad=True).to(device)
             optimizer.zero_grad()
-            reconstr_seq, z_params, z_params_prior = vrnn(var_im, var_pos)
+            reconstr_seq, z_params, z_params_prior = vrnn(var_pos)
             # Compute loss and optimize params
             kld = args.beta*kld_loss(z_params[:,:,0,:], z_params[:,:,1,:], z_params_prior[:,:,0,:], z_params_prior[:,:,1,:])
             mse = F.mse_loss(reconstr_seq, var_pos, reduction='sum')/(args.batch_size)
@@ -94,7 +95,7 @@ def main():
                 writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
                 with torch.no_grad():
-                    pred_pos = vrnn.predict_sequence(var_im, var_pos)
+                    pred_pos = vrnn.predict_sequence(var_pos)
                     target_pos = sample[1][:,args.seq_len:].float().to(pred_pos.device)
                     pred_mse = F.mse_loss(pred_pos, target_pos, reduction='sum')/(args.batch_size)
                     writer.add_scalar('data/prediction_loss', pred_mse, i + epoch*len(train_loader))
