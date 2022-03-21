@@ -23,6 +23,15 @@ def kld_loss(mu, log_var, mu_prior, log_var_prior, mean_reduction=True):
     else:
         return kld_per_sample
 
+def kld_loss_standard(mu, log_var, mean_reduction=True):
+    mu = mu.flatten(1)
+    log_var = log_var.flatten(1)
+    kld_per_sample = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim = 1)
+    if mean_reduction:
+        return torch.mean(kld_per_sample, dim = 0)
+    else:
+        return kld_per_sample
+
 def mse_through_time(input, target, visual=True):
     total_mse = F.mse_loss(input, target, reduction='none')
     total_mse = total_mse.transpose(0,1)

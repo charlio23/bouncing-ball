@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 
 from dataloaders.bouncing_data import BouncingBallDataLoader
-from utils.losses import kld_loss, nll_gaussian
+from utils.losses import kld_loss_standard
 from models.VAE import ImageVAE
 
 
@@ -24,10 +24,11 @@ parser = argparse.ArgumentParser(description='Image VAE trainer')
 
 parser.add_argument('--name', required=True, type=str, help='Name of the experiment')
 parser.add_argument('--train_root', default='./dataset/train', type=str)
-parser.add_argument('--runs_path', default='./runs', type=str)
+parser.add_argument('--runs_path', default='/data2/users/cb221/runs', type=str)
 parser.add_argument('--epochs', default=40, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--determ', action='store_true', help='Use VAE or deterministic AE')
+parser.add_argument('--beta', default=1, type=float,metavar='N', help='beta VAE param')
 parser.add_argument('--lr', default=5e-4, type=float, metavar='N', help='learning rate')
 parser.add_argument('--latent_dim', default=32, type=int, metavar='N', help='dimension of latent space')
 
@@ -50,7 +51,7 @@ def main():
     # Load dataset
     dl = BouncingBallDataLoader(args.train_root, images=True)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
-    sample = next(iter(train_loader)).float()
+    sample = next(iter(train_loader))[0].float()
     _, _, input_dim, *_ = sample.size()
     variational = not args.determ
     # Load model
@@ -69,7 +70,7 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-
+            sample = sample[0]
             # Forward sample to network
             b, seq_len, C, H, W = sample.size()
             sample_in = sample.float().reshape((b*seq_len, C, H, W))
@@ -80,8 +81,8 @@ def main():
             mse = F.mse_loss(x_hat, var, reduction='sum')/(b)
             loss = mse
             if variational:
-                kld = kld_loss(z_mu, z_log_var)
-                loss += kld
+                kld = kld_loss_standard(z_mu, z_log_var)
+                loss += args.beta*kld
             loss.backward()
             optimizer.step()
             

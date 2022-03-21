@@ -14,16 +14,16 @@ class VRNN(nn.Module):
         self.prior = MLP(self.hidden_dim, self.hidden_dim, self.latent_dim*2)
         self.input_type = input_type
         if input_type=='visual':
-            self.embedder_x = CNNEncoder(self.input_dim, self.latent_dim, 4)
-            self.decoder = CNNResidualDecoder()
+            self.embedder_x = CNNEncoder(self.input_dim, self.latent_dim, 4, log_var=False)
+            self.decoder = CNNResidualDecoder(self.hidden_dim + self.latent_dim)
         else:
-            #self.embedder_x = CNNEncoderPosition(self.input_dim, input_pos, self.hidden_dim, 4)
             self.embedder_x = MLP(self.input_pos, self.hidden_dim, self.latent_dim)
             self.decoder = MLP(self.hidden_dim + self.latent_dim, self.hidden_dim, self.input_pos)
         self.encoder = MLP(self.hidden_dim + self.latent_dim, self.hidden_dim, self.latent_dim*2)
         self.embedder_z = MLP(self.latent_dim, self.hidden_dim, self.latent_dim)
         if decoder=='vainilla':
             self.hidden_decoder = None
+            raise NotImplementedError("Decoder '" + decoder + "' not implemented.")
         elif decoder=='LSTM':
             self.hidden_decoder = nn.LSTMCell(self.latent_dim*2, self.hidden_dim)
             if num_rec_layers==3:
@@ -34,6 +34,7 @@ class VRNN(nn.Module):
                 ])
         elif decoder=='GRU':
             self.hidden_decoder = None
+            raise NotImplementedError("Decoder '" + decoder + "' not implemented.")
         else:
             raise NotImplementedError("Decoder '" + decoder + "' not implemented.")
         
@@ -105,8 +106,8 @@ class VRNN(nn.Module):
             z, _, _ = self._inference(last_x, h_prev)
             _, h_prev, c_prev = self._decode(z, h_prev, c_prev)
         
-        pos_shape = [input.size(0), seq_len, input.size(2)]
-        reconstr_seq = torch.zeros(pos_shape).to(input.device)
+        _shape = [input.size(i) if i!=1 else seq_len for i in range(len(input.size()))]
+        reconstr_seq = torch.zeros(_shape).to(input.device)
         for i in range(seq_len):
             z_sampled = self._sample(h_prev)
             pos_hat, h_prev, c_prev = self._decode(z_sampled, h_prev, c_prev)

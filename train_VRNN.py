@@ -30,6 +30,7 @@ parser.add_argument('--hidden_dim', default=32, type=int, metavar='N', help='dim
 parser.add_argument('--latent_dim', default=32, type=int, metavar='N', help='dimension of latent space')
 parser.add_argument('--seq_len', default=50, type=int, metavar='N', help='length of input sequene')
 parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
+parser.add_argument('--visual', action='store_true', help='Use image video as input')
 
 
 def get_device(cuda=True):
@@ -51,7 +52,7 @@ def main():
     dl = BouncingBallDataLoader(args.train_root, images=False)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
     # Load model
-    vrnn = VRNN(3, 2, args.hidden_dim, args.latent_dim, num_rec_layers=3, input_type='base').float().to(device)
+    vrnn = VRNN(3, 2, args.hidden_dim, args.latent_dim, num_rec_layers=3, input_type='visual' if args.visual else 'base').float().to(device)
     print(vrnn)
     if args.load is not None:
         vrnn.load_state_dict(torch.load(args.load)['vrnn'])
@@ -68,15 +69,17 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-            _, pos = sample[0][:,:args.seq_len], sample[1][:,:args.seq_len]
+            im, pos = sample[0][:,:args.seq_len], sample[1][:,:args.seq_len]
             # Forward sample to network
-            #var_im = Variable(im.float(), requires_grad=True).to(device)
-            var_pos = Variable(pos.float(), requires_grad=True).to(device)
+            if args.visual:
+                var = Variable(im.float(), requires_grad=True).to(device)
+            else:
+                var = Variable(pos.float(), requires_grad=True).to(device)
             optimizer.zero_grad()
-            reconstr_seq, z_params, z_params_prior = vrnn(var_pos)
+            reconstr_seq, z_params, z_params_prior = vrnn(var)
             # Compute loss and optimize params
             kld = args.beta*kld_loss(z_params[:,:,0,:], z_params[:,:,1,:], z_params_prior[:,:,0,:], z_params_prior[:,:,1,:])
-            mse = F.mse_loss(reconstr_seq, var_pos, reduction='sum')/(args.batch_size)
+            mse = F.mse_loss(reconstr_seq, var, reduction='sum')/(args.batch_size)
             loss = args.beta*kld + mse
             loss.backward()
             optimizer.step()
@@ -95,17 +98,24 @@ def main():
                 writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
                 with torch.no_grad():
-                    pred_pos = vrnn.predict_sequence(var_pos)
-                    target_pos = sample[1][:,args.seq_len:].float().to(pred_pos.device)
-                    pred_mse = F.mse_loss(pred_pos, target_pos, reduction='sum')/(args.batch_size)
+                    pred_pos = vrnn.predict_sequence(var)
+                    if args.visual:
+                        target = sample[0][:,args.seq_len:].float().to(pred_pos.device)
+                    else:
+                        target = sample[1][:,args.seq_len:].float().to(pred_pos.device)
+                    pred_mse = F.mse_loss(pred_pos, target, reduction='sum')/(args.batch_size)
                     writer.add_scalar('data/prediction_loss', pred_mse, i + epoch*len(train_loader))
                 
-            if i % 100 == 0 and False:
-                #b, seq_len, C, H, W = sample.size()
-                #video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
+            if i % 100 == 0 and args.visual:
+                b, seq_len, C, H, W = sample[0][:,:args.seq_len].size()
+                video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
                 video_tensor_true = im.float().detach().cpu()
-                #writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
+                video_tensor_predict = pred_pos.detach().cpu()
+                video_tensor_predict_true = sample[0][:,args.seq_len:].size()
+                writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
+                writer.add_video('data/Predict_vid',video_tensor_predict[:16], i + epoch*len(train_loader))
+                writer.add_video('data/True_Future_vid',video_tensor_predict_true[:16], i + epoch*len(train_loader))
         scheduler.step()
         save_checkpoint({
             'epoch': epoch,
