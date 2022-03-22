@@ -61,7 +61,7 @@ def main():
     # Set up optimizers
     optimizer = Adam(vrnn.parameters(), lr=args.lr)
     gamma = 0.5
-    scheduler = StepLR(optimizer, step_size=30, gamma=gamma)
+    scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
 
     # Train Loop
     vrnn.train()
@@ -78,7 +78,7 @@ def main():
             optimizer.zero_grad()
             reconstr_seq, z_params, z_params_prior = vrnn(var)
             # Compute loss and optimize params
-            kld = args.beta*kld_loss(z_params[:,:,0,:], z_params[:,:,1,:], z_params_prior[:,:,0,:], z_params_prior[:,:,1,:])
+            kld = kld_loss(z_params[:,:,0,:], z_params[:,:,1,:], z_params_prior[:,:,0,:], z_params_prior[:,:,1,:])
             mse = F.mse_loss(reconstr_seq, var, reduction='sum')/(args.batch_size)
             loss = args.beta*kld + mse
             loss.backward()
@@ -111,7 +111,7 @@ def main():
                 video_tensor_hat = reconstr_seq.reshape((b, seq_len, C, H, W)).detach().cpu()
                 video_tensor_true = im.float().detach().cpu()
                 video_tensor_predict = pred_pos.detach().cpu()
-                video_tensor_predict_true = sample[0][:,args.seq_len:].size()
+                video_tensor_predict_true = sample[0][:,args.seq_len:].float().detach().cpu()
                 writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
                 writer.add_video('data/Predict_vid',video_tensor_predict[:16], i + epoch*len(train_loader))

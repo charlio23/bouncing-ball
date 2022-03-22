@@ -1,6 +1,10 @@
 import random
 from functools import reduce
 from math import atan2
+import numpy as np
+
+def PolyArea(x,y):
+    return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
 
 def to_convex_contour(vertices_count,
                       x_generator=random.random,

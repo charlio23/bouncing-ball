@@ -10,7 +10,7 @@ import cv2
 import pymunk
 import pymunk.pygame_util
 
-from datasets.util import to_convex_contour, calculate_midpoint
+from datasets.util import to_convex_contour, calculate_midpoint, PolyArea
 import numpy as np
 
 from pymunk import Vec2d
@@ -73,6 +73,7 @@ class BouncingBall2D(object):
         self._draw_options = pymunk.pygame_util.DrawOptions(self._screen)
 
         # Static barrier walls (lines) that the balls bounce off of
+        self.abort = False
         self.static_lines = None
         self._add_static_scenery()
 
@@ -88,6 +89,8 @@ class BouncingBall2D(object):
         """
         The main loop of the game.
         """
+        if self.abort:
+            return None, None
         # Main loop
         positions = []
         image_seq = []
@@ -122,14 +125,20 @@ class BouncingBall2D(object):
         Create the static bodies.
         :return: None
         """
-        N = random.randint(4,10)
+        N = random.randint(4,9)
         vertices = to_convex_contour(N)
-        midpoint = calculate_midpoint(vertices)
-        vertices = [[p[0] - midpoint[0] + 0.5, p[1] - midpoint[1] + 0.5] for p in vertices]
-        vertices = [(0, 0),
-                    (1, 0),
-                    (1, 1),
-                    (0, 1)]
+        x = np.array([vertices[i][0] for i in range(N)])
+        y = np.array([vertices[i][1] for i in range(N)])
+        area = PolyArea(x,y)
+        if area < 0.5:
+            self.abort = True
+        
+        #midpoint = calculate_midpoint(vertices)
+        #vertices = [[p[0] - midpoint[0] + 0.5, p[1] - midpoint[1] + 0.5] for p in vertices]
+        #vertices = [(0, 0),
+        #            (1, 0),
+        #            (1, 1),
+        #            (0, 1)]
         #print(vertices)
         #print(midpoint)
         line_width = 5
@@ -214,4 +223,4 @@ if __name__ == "__main__":
         print(positions.shape)
         print(images.shape)
         np.save('positions.npy', positions)
-        visualize_rollout(images)
+        visualize_rollout(images, save=True)
