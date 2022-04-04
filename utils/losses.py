@@ -32,6 +32,11 @@ def kld_loss_standard(mu, log_var, mean_reduction=True):
     else:
         return kld_per_sample
 
+def kl_categorical(preds, log_prior, eps=1e-16):
+    """Based on https://github.com/ethanfetaya/NRI (MIT License)."""
+    kl_div = preds * (torch.log(preds + eps) - log_prior)
+    return kl_div.sum() / (preds.size(0))
+
 def mse_through_time(input, target, visual=True):
     total_mse = F.mse_loss(input, target, reduction='none')
     total_mse = total_mse.transpose(0,1)

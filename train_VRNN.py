@@ -52,7 +52,7 @@ def main():
     dl = BouncingBallDataLoader(args.train_root, images=False)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
     # Load model
-    vrnn = VRNN(3, 2, args.hidden_dim, args.latent_dim, num_rec_layers=3, input_type='visual' if args.visual else 'base').float().to(device)
+    vrnn = VRNN(3, 2, args.hidden_dim, args.latent_dim, num_rec_layers=5, input_type='visual' if args.visual else 'base').float().to(device)
     print(vrnn)
     if args.load is not None:
         vrnn.load_state_dict(torch.load(args.load)['vrnn'])
@@ -61,7 +61,7 @@ def main():
     # Set up optimizers
     optimizer = Adam(vrnn.parameters(), lr=args.lr)
     gamma = 0.5
-    scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
+    scheduler = StepLR(optimizer, step_size=25, gamma=gamma)
 
     # Train Loop
     vrnn.train()
@@ -81,6 +81,7 @@ def main():
             kld = kld_loss(z_params[:,:,0,:], z_params[:,:,1,:], z_params_prior[:,:,0,:], z_params_prior[:,:,1,:])
             mse = F.mse_loss(reconstr_seq, var, reduction='sum')/(args.batch_size)
             loss = args.beta*kld + mse
+            elbo = kld + mse
             loss.backward()
             optimizer.step()
             
@@ -97,6 +98,7 @@ def main():
                 writer.add_scalar('data/mse_loss', mse, i + epoch*len(train_loader))
                 writer.add_scalar('data/kl_loss', kld, i + epoch*len(train_loader))
                 writer.add_scalar('data/total_loss', loss, i + epoch*len(train_loader))
+                writer.add_scalar('data/elbo', elbo, i + epoch*len(train_loader))
                 with torch.no_grad():
                     pred_pos = vrnn.predict_sequence(var)
                     if args.visual:

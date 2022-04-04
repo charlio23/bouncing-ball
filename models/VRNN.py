@@ -1,4 +1,3 @@
-from re import X
 import torch
 import torch.nn as nn
 from models.modules import MLP, CNNEncoder, CNNEncoderPosition, CNNResidualDecoder
@@ -26,12 +25,10 @@ class VRNN(nn.Module):
             raise NotImplementedError("Decoder '" + decoder + "' not implemented.")
         elif decoder=='LSTM':
             self.hidden_decoder = nn.LSTMCell(self.latent_dim*2, self.hidden_dim)
-            if num_rec_layers==3:
-                self.hidden_decoder = nn.ModuleList([
-                    nn.LSTMCell(self.latent_dim*2, self.hidden_dim),
-                    nn.LSTMCell(self.hidden_dim, self.hidden_dim),
-                    nn.LSTMCell(self.hidden_dim, self.hidden_dim)
-                ])
+            if num_rec_layers!= 1:
+                self.hidden_decoder = nn.ModuleList([nn.LSTMCell(self.latent_dim*2, self.hidden_dim)])
+                for _ in range(1, num_rec_layers):
+                    self.hidden_decoder.append(nn.LSTMCell(self.hidden_dim, self.hidden_dim))
         elif decoder=='GRU':
             self.hidden_decoder = None
             raise NotImplementedError("Decoder '" + decoder + "' not implemented.")

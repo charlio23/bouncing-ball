@@ -206,7 +206,7 @@ class BouncingBall2D(object):
         self.draw()
 
     def draw(self):
-            self._screen.fill(pygame.Color(150, 150, 150))
+            self._screen.fill(pygame.Color(50, 50, 50))
             pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
             # Draw the static lines.
             for line in self.static_lines:

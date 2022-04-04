@@ -1,3 +1,5 @@
+from pyexpat.errors import XML_ERROR_PARAM_ENTITY_REF
+from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,6 +25,31 @@ class MLP(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc_final(x)
         return x
+
+class SequentialEncoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_discr, output_cont, num_layers=4, output_type='many'):
+        super(SequentialEncoder, self).__init__()
+        # Output type: one|many
+        self.output_type = output_type
+        self.lstm_encoder = nn.LSTM(input_dim, hidden_dim, 
+                                    num_layers, batch_first=True)
+        self.out_discr = MLP(hidden_dim, hidden_dim, output_discr)
+        
+        self.out_cont_mean = MLP(hidden_dim, hidden_dim, output_cont)
+        self.out_cont_log_var = MLP(hidden_dim, hidden_dim, output_cont)
+        
+    def forward(self, x):
+
+        x, _ = self.lstm_encoder(x)
+        x = x[:,-1] if self.output_type=='one' else x
+        z_distrib = self.out_discr(x)
+        x_mean = self.out_cont_mean(x)
+        x_log_var = self.out_cont_log_var(x)
+
+        z_distrib, x_mean, x_log_var
+
+
+
 
 class ResidualBlock(nn.Module):
     "Each residual block should up-sample an image x2"
