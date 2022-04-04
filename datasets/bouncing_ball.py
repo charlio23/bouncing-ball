@@ -95,7 +95,7 @@ class BouncingBall2D(object):
         positions = []
         image_seq = []
         self._create_ball()
-        for i in range(100):
+        for i in range(400):
             # Progress time forward
             for x in range(self._physics_steps_per_frame):
                 self._space.step(self._dt)

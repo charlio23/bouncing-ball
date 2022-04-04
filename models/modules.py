@@ -45,8 +45,8 @@ class SequentialEncoder(nn.Module):
         z_distrib = self.out_discr(x)
         x_mean = self.out_cont_mean(x)
         x_log_var = self.out_cont_log_var(x)
-
-        z_distrib, x_mean, x_log_var
+        
+        return z_distrib, x_mean, x_log_var
 
 
 

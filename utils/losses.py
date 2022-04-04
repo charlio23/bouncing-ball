@@ -11,6 +11,14 @@ def nll_gaussian(mu_x, log_var, target):
     var_term = 0.5 * dim * (np.log((2 * np.pi)) + log_var.sum(dim=-1))
     return (neg_log_p.sum() + var_term.sum())/ (target.size(0))
 
+def nll_gaussian_var_fixed(preds, target, variance, add_const=False):
+    """Based on https://github.com/ethanfetaya/NRI (MIT License)."""
+    neg_log_p = (preds - target) ** 2 / (2 * variance)
+    if add_const:
+        const = 0.5 * np.log(2 * np.pi * variance)
+        neg_log_p += const
+    return neg_log_p.sum() / (target.size(0) * target.size(1))
+
 def kld_loss(mu, log_var, mu_prior, log_var_prior, mean_reduction=True):
     mu, mu_prior = mu.flatten(1), mu_prior.flatten(1)
     log_var, log_var_prior = log_var.flatten(1), log_var_prior.flatten(1)
@@ -32,9 +40,9 @@ def kld_loss_standard(mu, log_var, mean_reduction=True):
     else:
         return kld_per_sample
 
-def kl_categorical(preds, log_prior, eps=1e-16):
+def kl_categorical(preds, prior, eps=1e-16):
     """Based on https://github.com/ethanfetaya/NRI (MIT License)."""
-    kl_div = preds * (torch.log(preds + eps) - log_prior)
+    kl_div = preds * (torch.log(preds + eps) - torch.log(prior + eps))
     return kl_div.sum() / (preds.size(0))
 
 def mse_through_time(input, target, visual=True):
