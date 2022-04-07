@@ -74,14 +74,14 @@ class VRSLDS(nn.Module):
     def _compute_elbo(self, y_pred, input, z_distr, z_next, x_mean, x_log_var, x_next):
         # Fixed variance
         # Reconstruction Loss p(y_t | x_t, z_t)
-        nll = nll_gaussian_var_fixed(y_pred, input, variance=1e-4)
+        nll = nll_gaussian_var_fixed(y_pred, input, variance=1e-2)
         # Continous KL term p(z_1) and p(z_t | z_t-1, x_t-1)
         # Skip p(z_1) for now
-        kld = kl_categorical(z_next, z_distr[:,1:,:])
+        kld = kl_categorical(z_distr[:,1:,:], z_next)
         # Discrete KL term p(x_1) and p(x_t | z_t, x_t-1)
         # Skip p(x_1) for now
-        log_var_prior = torch.ones_like(x_next).to(x_next.device)*torch.log(torch.tensor(1e-4))
-        kld += kld_loss(x_next, log_var_prior, x_mean[:,1:,:], x_log_var[:,1:,:])
+        log_var_prior = torch.ones_like(x_next).to(x_next.device)*torch.log(torch.tensor(1e-2))
+        kld += kld_loss(x_mean[:,1:,:], x_log_var[:,1:,:], x_next, log_var_prior)
         elbo = nll + kld
         loss = nll + self.beta*kld
         losses = {
