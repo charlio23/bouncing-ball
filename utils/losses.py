@@ -43,7 +43,12 @@ def kld_loss_standard(mu, log_var, mean_reduction=True):
 def kl_categorical(preds, prior, eps=1e-16):
     """Based on https://github.com/ethanfetaya/NRI (MIT License)."""
     kl_div = preds * (torch.log(preds + eps) - torch.log(prior + eps))
-    return kl_div.sum() / (preds.size(0))
+    return kl_div.sum() / preds.size(0)
+
+def kl_categorical_uniform(preds, num_categories, eps=1e-16):
+    """Based on https://github.com/ethanfetaya/NRI (MIT License)."""
+    kl_div = preds * (torch.log(preds + eps) - np.log(1/num_categories + eps))
+    return kl_div.sum() / preds.size(0)
 
 def mse_through_time(input, target, visual=True):
     total_mse = F.mse_loss(input, target, reduction='none')
