@@ -125,20 +125,20 @@ class BouncingBall2D(object):
         Create the static bodies.
         :return: None
         """
-        N = random.randint(4,9)
-        vertices = to_convex_contour(N)
-        x = np.array([vertices[i][0] for i in range(N)])
-        y = np.array([vertices[i][1] for i in range(N)])
-        area = PolyArea(x,y)
-        if area < 0.5:
-            self.abort = True
+        #N = random.randint(4,9)
+        #vertices = to_convex_contour(N)
+        #x = np.array([vertices[i][0] for i in range(N)])
+        #y = np.array([vertices[i][1] for i in range(N)])
+        #area = PolyArea(x,y)
+        #if area < 0.5:
+        #    self.abort = True
         
         #midpoint = calculate_midpoint(vertices)
         #vertices = [[p[0] - midpoint[0] + 0.5, p[1] - midpoint[1] + 0.5] for p in vertices]
-        #vertices = [(0, 0),
-        #            (1, 0),
-        #            (1, 1),
-        #            (0, 1)]
+        vertices = [(0, 0),
+                    (1, 0),
+                    (1, 1),
+                    (0, 1)]
         #print(vertices)
         #print(midpoint)
         line_width = 5
@@ -179,11 +179,13 @@ class BouncingBall2D(object):
         """
         radius = 35
         body = pymunk.Body()
-        x = random.randint(100, 200)
-        body.position = x, 128
-        vx = random.uniform(-5,5)*50
-        vy = random.randint(-5,5)*50
-        body.velocity = vx, vy
+        x = random.randint(50, 200)
+        y = random.randint(50, 200)
+        body.position = x, y
+        velocities = [(200, 200), (-200, 200), (-200, -100), (200, -200)]
+        #vx = random.uniform(-5,5)*50
+        #vy = random.randint(-5,5)*50
+        body.velocity = random.choice(velocities)
         shape = pymunk.Circle(body, radius, (0, 0))
         shape.elasticity = 1
         shape.density = 1
