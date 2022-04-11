@@ -16,12 +16,13 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 
 from dataloaders.nascar import NascarDataLoader
+from dataloaders.bouncing_data import BouncingBallDataLoader
 from models.VRSLDS import VRSLDS
 
 parser = argparse.ArgumentParser(description='VrSLDS trainer')
 
 parser.add_argument('--name', required=True, type=str, help='Name of the experiment')
-parser.add_argument('--train_file', default='/data2/users/cb221/nascar.npz', type=str)
+parser.add_argument('--train_path', default='/data2/users/cb221/nascar.npz', type=str)
 parser.add_argument('--epochs', default=500, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 128)')
 parser.add_argument('--beta', default=1, type=float,metavar='N', help='beta VAE param')
@@ -33,6 +34,7 @@ parser.add_argument('--seq_len', default=50, type=int, metavar='N', help='length
 parser.add_argument('--num_enc_layers', default=5, type=int, metavar='N', help='Number of LSTM encoder layers')
 parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
 parser.add_argument('--SB', action='store_true', help='Use image video as input')
+parser.add_argument('--experiment', default='ball', type=str, help='Experiment ball|nascar|video')
 
 
 def get_device(cuda=True):
@@ -45,15 +47,23 @@ def save_checkpoint(state, filename='model'):
 def main():
     global args, writer
     args = parser.parse_args()
-    writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs_VrSLDS", args.name))
+    writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs_VrSLDS_" + args.experiment, args.name))
     print(args)
     # Set up writers and device
     device = get_device()
     print("=> Using device: " + device)
     # Load dataset
-    dl = NascarDataLoader(args.train_file, seq_len=args.seq_len)
-    train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    obs_dim = next(iter(train_loader))[0].size(-1)
+    if args.experiment=='nascar':
+        dl = NascarDataLoader(args.train_path, seq_len=args.seq_len)
+        train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
+        obs_dim = next(iter(train_loader))[0].size(-1)
+    elif args.experiment=='ball':
+        dl = BouncingBallDataLoader('/data2/users/cb221/bouncing_ball_square/train')
+        train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
+        obs_dim = next(iter(train_loader))[1].size(-1)
+    else:
+        raise NotImplementedError(args.experiment + 'not implemented!')
+    
     # Load model
     vrslds = VRSLDS(obs_dim=obs_dim, discr_dim=args.discr_dim, cont_dim=args.cont_dim,
                     hidden_dim=args.hidden_dim, num_rec_layers=args.num_enc_layers, 
@@ -74,7 +84,10 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-            y, x, z = sample
+            if args.experiment=='nascar':
+                y, x, z = sample
+            elif args.experiment=='ball':
+                _, y = sample
             # Forward sample to network
             var = Variable(y.float(), requires_grad=True).to(device)
             optimizer.zero_grad()
@@ -106,10 +119,11 @@ def main():
                 ax1 = fig_inferred.add_subplot(1,1,1)
                 ax1.scatter(x_sample[0,:,0],x_sample[0,:,1], color=colors[inferred_states[0]])
                 writer.add_figure('data/inferred_latent_cont_state', fig_inferred, i + epoch*len(train_loader))
-                fig_real = plt.figure()
-                ax2 = fig_real.add_subplot(1,1,1)
-                ax2.scatter(x[0,:,0],x[0,:,1], color=colors[z[0]])
-                writer.add_figure('data/true_latent_cont_state', fig_real, i + epoch*len(train_loader))
+                if args.experiment=='ball':
+                    fig_real = plt.figure()
+                    ax2 = fig_real.add_subplot(1,1,1)
+                    ax2.scatter(x[0,:,0],x[0,:,1], color=colors[z[0]])
+                    writer.add_figure('data/true_latent_cont_state', fig_real, i + epoch*len(train_loader))
         scheduler.step()
         save_checkpoint({
             'epoch': epoch,

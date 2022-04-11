@@ -41,7 +41,6 @@ class SequentialEncoder(nn.Module):
         self.out_cont_log_var = MLP(hidden_dim*dim_multiplier, hidden_dim, output_cont)
         
     def forward(self, x):
-
         x, _ = self.lstm_encoder(x)
         x = x[:,-1] if self.output_type=='one' else x
         z_distrib = self.out_discr(x)

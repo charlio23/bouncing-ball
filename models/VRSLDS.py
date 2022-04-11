@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from models.modules import SequentialEncoder
 from utils.sampling import gumbel_softmax, my_softmax
-from utils.losses import kl_categorical, kld_loss, nll_gaussian_var_fixed
+from utils.losses import kl_categorical, kl_categorical_uniform, kld_loss, kld_loss_standard, nll_gaussian_var_fixed
 
 class VRSLDS(nn.Module):
     def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=0.5, bidirectional=True, beta=1, SB=False):
@@ -29,6 +29,14 @@ class VRSLDS(nn.Module):
         self.R = nn.ModuleList([
             nn.Linear(cont_dim, (discr_dim-1) if SB else discr_dim) for i in range(self.discr_dim)
         ])
+        self._init_weights()
+
+    def _init_weights(self):
+        for i in range(self.discr_dim):
+            self.R[i].weight.data.fill_(1e-5)
+            self.R[i].bias.data.fill_(1/self.discr_dim)
+
+            self.A[i].weight.data.fill_(0)
 
     def _inference(self, x):
         return self.encoder(x)
@@ -74,14 +82,12 @@ class VRSLDS(nn.Module):
     def _compute_elbo(self, y_pred, input, z_distr, z_next, x_mean, x_log_var, x_next):
         # Fixed variance
         # Reconstruction Loss p(y_t | x_t, z_t)
-        nll = nll_gaussian_var_fixed(y_pred, input, variance=1e-2)
+        nll = nll_gaussian_var_fixed(y_pred, input, variance=1e-4)
         # Continous KL term p(z_1) and p(z_t | z_t-1, x_t-1)
-        # Skip p(z_1) for now
-        kld = kl_categorical(z_distr[:,1:,:], z_next)
+        kld = kl_categorical(z_distr[:,1:,:], z_next) + kl_categorical_uniform(z_distr[:,0,:], self.discr_dim)
         # Discrete KL term p(x_1) and p(x_t | z_t, x_t-1)
-        # Skip p(x_1) for now
-        log_var_prior = torch.ones_like(x_next).to(x_next.device)*torch.log(torch.tensor(1e-2))
-        kld += kld_loss(x_mean[:,1:,:], x_log_var[:,1:,:], x_next, log_var_prior)
+        log_var_prior = torch.ones_like(x_next).to(x_next.device)*torch.log(torch.tensor(1e-4))
+        kld += kld_loss(x_mean[:,1:,:], x_log_var[:,1:,:], x_next, log_var_prior) + kld_loss_standard(x_mean[:,0,:], x_log_var[:,0,:])
         elbo = nll + kld
         loss = nll + self.beta*kld
         losses = {
