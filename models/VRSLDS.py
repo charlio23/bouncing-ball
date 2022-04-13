@@ -7,7 +7,7 @@ from utils.losses import kl_categorical, kl_categorical_uniform, kld_loss, kld_l
 
 class VRSLDS(nn.Module):
     def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=0.5, 
-                 bidirectional=True, beta=1, SB=False, posterior='factorised',
+                 bidirectional=True, beta=1, SB=False, posterior='sequential',
                  full_montecarlo=False):
         super(VRSLDS, self).__init__()
         self.obs_dim = obs_dim
@@ -32,8 +32,8 @@ class VRSLDS(nn.Module):
             self.out_cont_mean = MLP(hidden_dim*dim_multiplier, hidden_dim, cont_dim)
             self.out_cont_log_var = MLP(hidden_dim*dim_multiplier, hidden_dim, cont_dim)
         else:
-            self.out_discr = MLP(hidden_dim + discr_dim + cont_dim, hidden_dim, discr_dim)
-            self.out_cont = MLP(hidden_dim + discr_dim + cont_dim, hidden_dim, cont_dim*2)
+            self.out_discr = MLP(hidden_dim*dim_multiplier + discr_dim + cont_dim, hidden_dim, discr_dim)
+            self.out_cont = MLP(hidden_dim*dim_multiplier + discr_dim + cont_dim, hidden_dim, cont_dim*2)
 
         self.C = nn.ModuleList([
             nn.Linear(cont_dim, obs_dim) for i in range(self.discr_dim)
@@ -86,6 +86,7 @@ class VRSLDS(nn.Module):
             z_samp_i = torch.zeros(B,self.discr_dim).to(x.device)
             x_samp_i = torch.zeros(B,self.cont_dim).to(x.device)
             for t in range(T):
+                
                 z_input = torch.cat([embedding, z_samp_i, x_samp_i],dim=-1)
                 z_distrib_i = self.out_discr(z_input)
                 z_distrib[:,t,:] = z_distrib_i

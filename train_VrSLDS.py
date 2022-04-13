@@ -46,6 +46,7 @@ def save_checkpoint(state, filename='model'):
 
 def main():
     global args, writer
+    torch.autograd.anomaly_mode.set_detect_anomaly(True)
     args = parser.parse_args()
     writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs_VrSLDS_" + args.experiment, args.name))
     print(args)
