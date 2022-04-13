@@ -34,20 +34,11 @@ class SequentialEncoder(nn.Module):
         self.output_type = output_type
         self.lstm_encoder = nn.LSTM(input_dim, hidden_dim, 
                                     num_layers, batch_first=True, bidirectional=bidirectional)
-        dim_multiplier = 2 if self.bidirectional else 1
-        self.out_discr = MLP(hidden_dim*dim_multiplier, hidden_dim, output_discr)
-        
-        self.out_cont_mean = MLP(hidden_dim*dim_multiplier, hidden_dim, output_cont)
-        self.out_cont_log_var = MLP(hidden_dim*dim_multiplier, hidden_dim, output_cont)
         
     def forward(self, x):
         x, _ = self.lstm_encoder(x)
         x = x[:,-1] if self.output_type=='one' else x
-        z_distrib = self.out_discr(x)
-        x_mean = self.out_cont_mean(x)
-        x_log_var = self.out_cont_log_var(x)
-        
-        return z_distrib, x_mean, x_log_var
+        return x
 
 
 

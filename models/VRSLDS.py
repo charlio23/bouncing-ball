@@ -1,12 +1,14 @@
 import torch
 import torch.nn as nn
 
-from models.modules import SequentialEncoder
+from models.modules import SequentialEncoder, MLP
 from utils.sampling import gumbel_softmax, my_softmax
-from utils.losses import kl_categorical, kl_categorical_uniform, kld_loss, kld_loss_standard, nll_gaussian_var_fixed
+from utils.losses import kl_categorical, kl_categorical_uniform, kld_loss, kld_loss_standard, nll_gaussian, nll_gaussian_var_fixed
 
 class VRSLDS(nn.Module):
-    def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=0.5, bidirectional=True, beta=1, SB=False):
+    def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=0.5, 
+                 bidirectional=True, beta=1, SB=False, posterior='factorised',
+                 full_montecarlo=False):
         super(VRSLDS, self).__init__()
         self.obs_dim = obs_dim
         self.discr_dim = discr_dim
@@ -17,9 +19,22 @@ class VRSLDS(nn.Module):
         self.bidirectional = bidirectional
         self.beta = beta
         self.SB = SB
+        # Posterior factorised|sequential
+        self.posterior = posterior
+        self.full_montecarlo = full_montecarlo
 
         # Network parameters
         self.encoder = SequentialEncoder(obs_dim, hidden_dim, discr_dim, cont_dim, num_rec_layers, bidirectional)
+
+        dim_multiplier = 2 if self.bidirectional else 1
+        if self.posterior=='factorised':
+            self.out_discr = MLP(hidden_dim*dim_multiplier, hidden_dim, discr_dim)
+            self.out_cont_mean = MLP(hidden_dim*dim_multiplier, hidden_dim, cont_dim)
+            self.out_cont_log_var = MLP(hidden_dim*dim_multiplier, hidden_dim, cont_dim)
+        else:
+            self.out_discr = MLP(hidden_dim + discr_dim + cont_dim, hidden_dim, discr_dim)
+            self.out_cont = MLP(hidden_dim + discr_dim + cont_dim, hidden_dim, cont_dim*2)
+
         self.C = nn.ModuleList([
             nn.Linear(cont_dim, obs_dim) for i in range(self.discr_dim)
         ])
@@ -39,7 +54,8 @@ class VRSLDS(nn.Module):
             self.A[i].weight.data.fill_(0)
 
     def _inference(self, x):
-        return self.encoder(x)
+        x = self.encoder(x)
+        return x
 
     def _sample_discrete_states(self, z_distrib):
         return gumbel_softmax(z_distrib, tau=self.tau)
@@ -49,6 +65,42 @@ class VRSLDS(nn.Module):
         x_std = (x_log_var*0.5).exp()
         sample = x_mean + x_std*eps
         return sample
+
+    def _encode_and_sample(self, x):
+        x = self._inference(x)
+        if self.posterior=='factorised':
+            z_distrib = self.out_discr(x)
+            x_mean = self.out_cont_mean(x)
+            x_log_var = self.out_cont_log_var(x)
+            # Sample from posterior
+            z_sample = self._sample_discrete_states(z_distrib)
+            x_sample = self._sample_cont_states(x_mean, x_log_var)
+        else:
+            embedding = x[:,-1]
+            B, T, _ = x.size()
+            z_sample = torch.zeros(B, T, self.discr_dim).to(x.device)
+            z_distrib = torch.zeros_like(z_sample)
+            x_sample = torch.zeros(B, T, self.cont_dim).to(x.device)
+            x_mean = torch.zeros_like(x_sample)
+            x_log_var = torch.zeros_like(x_sample)
+            z_samp_i = torch.zeros(B,self.discr_dim).to(x.device)
+            x_samp_i = torch.zeros(B,self.cont_dim).to(x.device)
+            for t in range(T):
+                z_input = torch.cat([embedding, z_samp_i, x_samp_i],dim=-1)
+                z_distrib_i = self.out_discr(z_input)
+                z_distrib[:,t,:] = z_distrib_i
+
+                z_samp_i = self._sample_discrete_states(z_distrib_i)
+                z_sample[:,t,:] = z_samp_i
+
+                x_input = torch.cat([embedding, z_samp_i, x_samp_i], dim=-1)
+                x_mean_i, x_log_var_i = self.out_cont(x_input).split(self.cont_dim, dim=-1)
+                x_mean[:,t,:] = x_mean_i
+                x_log_var[:,t,:] = x_log_var_i
+
+                x_samp_i = self._sample_cont_states(x_mean_i, x_log_var_i)
+                x_sample[:,t,:] = x_samp_i
+        return z_distrib, x_mean, x_log_var, z_sample, x_sample
 
     def _compute_SB_prob(self, prob_vector):
         B, T, _ = prob_vector.size()
@@ -79,15 +131,24 @@ class VRSLDS(nn.Module):
 
         return y_pred, z_next, x_next
     
-    def _compute_elbo(self, y_pred, input, z_distr, z_next, x_mean, x_log_var, x_next):
+    def _compute_elbo(self, y_pred, input, z_distr, z_next, x_mean, x_log_var, x_next, z_sample, x_sample):
         # Fixed variance
         # Reconstruction Loss p(y_t | x_t, z_t)
-        nll = nll_gaussian_var_fixed(y_pred, input, variance=1e-4)
-        # Continous KL term p(z_1) and p(z_t | z_t-1, x_t-1)
-        kld = kl_categorical(z_distr[:,1:,:], z_next) + kl_categorical_uniform(z_distr[:,0,:], self.discr_dim)
-        # Discrete KL term p(x_1) and p(x_t | z_t, x_t-1)
-        log_var_prior = torch.ones_like(x_next).to(x_next.device)*torch.log(torch.tensor(1e-4))
-        kld += kld_loss(x_mean[:,1:,:], x_log_var[:,1:,:], x_next, log_var_prior) + kld_loss_standard(x_mean[:,0,:], x_log_var[:,0,:])
+        nll = nll_gaussian_var_fixed(y_pred, input, variance=1e-4, add_const=True)
+
+        if self.full_montecarlo:
+            eps = 1e-16
+            # log q(x) + log q(z) - log p(x_t | x_t-1, z_t) - log p(z_t| x_t-1, z_t-1)
+            ## discrete kl
+            kld = (z_sample[:,1:,:] * (torch.log(z_distr[:,1:,:] + eps) - torch.log(z_next + eps))).sum()/z_sample.size(0)
+            ## continous kl
+            kld += nll_gaussian_var_fixed(x_next, x_sample[:,1:,:], variance=1e-4, add_const=True) - nll_gaussian(x_mean[:,1:,:], x_log_var[:,1:,:], x_sample[:,1:,:])
+        else:
+            # Continous KL term p(z_1) and p(z_t | z_t-1, x_t-1)
+            kld = kl_categorical(z_distr[:,1:,:], z_next) + kl_categorical_uniform(z_distr[:,0,:], self.discr_dim)
+            # Discrete KL term p(x_1) and p(x_t | z_t, x_t-1)
+            log_var_prior = torch.ones_like(x_next).to(x_next.device)*torch.log(torch.tensor(1e-4))
+            kld += kld_loss(x_mean[:,1:,:], x_log_var[:,1:,:], x_next, log_var_prior) + kld_loss_standard(x_mean[:,0,:], x_log_var[:,0,:])
         elbo = nll + kld
         loss = nll + self.beta*kld
         losses = {
@@ -100,16 +161,13 @@ class VRSLDS(nn.Module):
     def forward(self, input):
         # Input (B, T, obs_dim)
         # Inference
-        z_distr, x_mean, x_log_var = self._inference(input)
-        # Sample from posterior
-        z_sample = self._sample_discrete_states(z_distr)
+        z_distr, x_mean, x_log_var, z_sample, x_sample = self._encode_and_sample(input)
         # Convert logits to normalized distribution
         z_distr = my_softmax(z_distr, -1)
-        x_sample = self._sample_cont_states(x_mean, x_log_var)
         # Forward step
         # Autoencode + 1-step computation
         y_pred, z_next, x_next = self._decode(z_sample, x_sample)
-        losses = self._compute_elbo(y_pred, input, z_distr, z_next, x_mean, x_log_var, x_next)
+        losses = self._compute_elbo(y_pred, input, z_distr, z_next, x_mean, x_log_var, x_next, z_sample, x_sample)
 
         return y_pred, x_sample, z_sample, losses
 

@@ -11,13 +11,13 @@ def nll_gaussian(mu_x, log_var, target):
     var_term = 0.5 * dim * (np.log((2 * np.pi)) + log_var.sum(dim=-1))
     return (neg_log_p.sum() + var_term.sum())/ (target.size(0))
 
-def nll_gaussian_var_fixed(preds, target, variance, add_const=False):
+def nll_gaussian_var_fixed(preds, target, variance, add_const=True):
     """Based on https://github.com/ethanfetaya/NRI (MIT License)."""
     neg_log_p = (preds - target) ** 2 / (2 * variance)
     if add_const:
         const = 0.5 * np.log(2 * np.pi * variance)
         neg_log_p += const
-    return neg_log_p.sum() / (target.size(0) * target.size(1))
+    return neg_log_p.sum() / (target.size(0))
 
 def kld_loss(mu, log_var, mu_prior, log_var_prior, mean_reduction=True):
     mu, mu_prior = mu.flatten(1), mu_prior.flatten(1)

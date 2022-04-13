@@ -41,8 +41,8 @@ def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
 
 def save_checkpoint(state, filename='model'):
-    os.makedirs("/data2/users/cb221/stored_models_vrslds/", exist_ok=True)
-    torch.save(state, "/data2/users/cb221/stored_models_vrslds/" + filename + '_latest.pth.tar')
+    os.makedirs("/data2/users/cb221/stored_models/", exist_ok=True)
+    torch.save(state, "/data2/users/cb221/stored_models/" + filename + '_latest.pth.tar')
 
 def main():
     global args, writer
@@ -57,8 +57,8 @@ def main():
         dl = NascarDataLoader(args.train_path, seq_len=args.seq_len)
         train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
         obs_dim = next(iter(train_loader))[0].size(-1)
-    elif args.experiment=='ball':
-        dl = BouncingBallDataLoader('/data2/users/cb221/bouncing_ball_square/train')
+    elif args.experiment=='ball' or args.experiment=='video':
+        dl = BouncingBallDataLoader('/data2/users/cb221/bouncing_ball_data_squares_4_vel/train')
         train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True, num_workers=4)
         obs_dim = next(iter(train_loader))[1].size(-1)
     else:
@@ -112,18 +112,25 @@ def main():
                 writer.add_scalar('data/loss', loss, i + epoch*len(train_loader))
                 writer.add_scalar('data/elbo', losses['elbo'], i + epoch*len(train_loader))
             if i % 100 == 0:
-                colors = np.array(['c', 'r', 'g', 'y', 'b'])
+                colors = np.array(['c', 'r', 'g', 'y', 'b', 'm'])
                 x_sample = x_sample.detach().cpu()
                 inferred_states = z_sample.argmax(-1).detach().cpu()
                 fig_inferred = plt.figure()
                 ax1 = fig_inferred.add_subplot(1,1,1)
                 ax1.scatter(x_sample[0,:,0],x_sample[0,:,1], color=colors[inferred_states[0]])
                 writer.add_figure('data/inferred_latent_cont_state', fig_inferred, i + epoch*len(train_loader))
-                if args.experiment=='ball':
+                if not args.experiment=='ball':
                     fig_real = plt.figure()
                     ax2 = fig_real.add_subplot(1,1,1)
                     ax2.scatter(x[0,:,0],x[0,:,1], color=colors[z[0]])
                     writer.add_figure('data/true_latent_cont_state', fig_real, i + epoch*len(train_loader))
+                else:
+                    y_pred = y_pred.detach().cpu()
+                    fig_real = plt.figure()
+                    ax2 = fig_real.add_subplot(1,1,1)
+                    ax2.plot(y[0,:,0],y[0,:,1])
+                    ax2.scatter(y_pred[0,:,0],y_pred[0,:,1])
+                    writer.add_figure('data/true_observation', fig_real, i + epoch*len(train_loader))
         scheduler.step()
         save_checkpoint({
             'epoch': epoch,
