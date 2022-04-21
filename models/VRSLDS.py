@@ -34,12 +34,13 @@ class VRSLDS(nn.Module):
         elif self.posterior=='first-order':
             self.out_discr = MLP(hidden_dim*dim_multiplier + discr_dim + cont_dim, hidden_dim, discr_dim)
             self.out_cont = MLP(hidden_dim*dim_multiplier + discr_dim + cont_dim, hidden_dim, cont_dim*2)
-        elif self.posterior=='recurent':
-            self.out_discr = nn.LSTMCell(hidden_dim*dim_multiplier + discr_dim + cont_dim, hidden_dim, discr_dim)
-            self.out_cont = nn.LSTMCell(hidden_dim*dim_multiplier + discr_dim + cont_dim, hidden_dim, cont_dim*2)
-            
+        elif self.posterior=='recurrent':
+            self.out_discr = nn.LSTMCell(hidden_dim*dim_multiplier + discr_dim + cont_dim, discr_dim)
+            self.out_cont = nn.LSTMCell(hidden_dim*dim_multiplier + discr_dim + cont_dim, cont_dim*2)
         else:
-            raise NotImplementedError(self.posterior + ' not implemented.')
+            self.out_discr = MLP(hidden_dim*dim_multiplier, hidden_dim, discr_dim)
+            self.out_cont_mean = MLP(hidden_dim*dim_multiplier, hidden_dim, cont_dim)
+            self.out_cont_log_var = MLP(hidden_dim*dim_multiplier, hidden_dim, cont_dim)
 
         self.C = nn.ModuleList([
             nn.Linear(cont_dim, obs_dim) for i in range(self.discr_dim)
@@ -85,7 +86,7 @@ class VRSLDS(nn.Module):
         x = self._inference(x)
         if self.posterior=='factorised':
             z_distrib, x_mean, x_log_var, z_sample, x_sample = self._sample_factorized(x)
-        else:
+        elif self.posterior=='first-order':
             B, T, _ = x.size()
             z_sample = torch.zeros(B, T, self.discr_dim).to(x.device)
             z_distrib = torch.zeros_like(z_sample)
@@ -110,6 +111,70 @@ class VRSLDS(nn.Module):
 
                 x_samp_i = self._sample_cont_states(x_mean_i, x_log_var_i)
                 x_sample[:,t,:] = x_samp_i
+        elif self.posterior=='recurrent':
+            B, T, _ = x.size()
+            h_prev_discr = torch.zeros((B, self.discr_dim)).to(x.device)
+            c_prev_discr = torch.zeros((B, self.discr_dim)).to(x.device)
+            h_prev_cont = torch.zeros((B, self.cont_dim*2)).to(x.device)
+            c_prev_cont = torch.zeros((B, self.cont_dim*2)).to(x.device)
+            z_sample = torch.zeros(B, T, self.discr_dim).to(x.device)
+            z_distrib = torch.zeros_like(z_sample)
+            x_sample = torch.zeros(B, T, self.cont_dim).to(x.device)
+            x_mean = torch.zeros_like(x_sample)
+            x_log_var = torch.zeros_like(x_sample)
+            z_samp_i = torch.zeros(B,self.discr_dim).to(x.device)
+            x_samp_i = torch.zeros(B,self.cont_dim).to(x.device)
+            for t in range(T):
+                embedding = x[:,t]
+                z_input = torch.cat([embedding, z_samp_i, x_samp_i],dim=-1)
+                h_prev_discr, c_prev_discr = self.out_discr(z_input, (h_prev_discr, c_prev_discr))
+                z_distrib[:,t,:] = h_prev_discr
+
+                z_samp_i = self._sample_discrete_states(h_prev_discr)
+                z_sample[:,t,:] = z_samp_i
+
+                x_input = torch.cat([embedding, z_samp_i, x_samp_i], dim=-1)
+                h_prev_cont, c_prev_cont = self.out_cont(x_input, (h_prev_cont, c_prev_cont))
+                x_mean_i, x_log_var_i = h_prev_cont.split(self.cont_dim, dim=-1)
+                x_mean[:,t,:] = x_mean_i
+                x_log_var[:,t,:] = x_log_var_i
+
+                x_samp_i = self._sample_cont_states(x_mean_i, x_log_var_i)
+                x_sample[:,t,:] = x_samp_i
+
+        elif self.posterior=='hierarchical':
+            B, T, _ = x.size()
+            z_smooth = self.out_discr(x)
+            x_mean_smooth = self.out_cont_mean(x)
+            x_log_var_smooth = self.out_cont_log_var(x)
+            z_sample = torch.zeros(B, T, self.discr_dim).to(x.device)
+            z_distrib = torch.zeros_like(z_sample)
+            x_sample = torch.zeros(B, T, self.cont_dim).to(x.device)
+            x_mean = torch.zeros_like(x_sample)
+            x_log_var = torch.zeros_like(x_sample)
+            z_next = torch.zeros(B,self.discr_dim).to(x.device)
+            x_next = torch.zeros(B,self.cont_dim).to(x.device)
+
+            for t in range(T):
+
+                z_distrib_i = z_next + z_smooth
+                z_distrib[:,t,:] = z_distrib_i
+
+                z_samp_i = self._sample_discrete_states(z_distrib_i)
+                z_sample[:,t,:] = z_samp_i
+
+                x_mean_i = x_next + x_mean_smooth
+                x_log_var_i = 1e-4 + x_log_var_smooth
+                x_mean[:,t,:] = x_mean_i
+                x_log_var[:,t,:] = x_log_var_i
+
+                x_samp_i = self._sample_cont_states(x_mean_i, x_log_var_i)
+                x_sample[:,t,:] = x_samp_i
+
+                _, z_next, x_next = self._decode(z_samp_i.unsqueeze(1), x_samp_i.unsqueeze(1))
+                z_next.unsqueeze_(1)
+                x_next.unsqueeze_(1)
+
         return z_distrib, x_mean, x_log_var, z_sample, x_sample
 
     def _compute_SB_prob(self, prob_vector):

@@ -35,6 +35,7 @@ parser.add_argument('--num_enc_layers', default=5, type=int, metavar='N', help='
 parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
 parser.add_argument('--SB', action='store_true', help='Use image video as input')
 parser.add_argument('--experiment', default='ball', type=str, help='Experiment ball|nascar|video')
+parser.add_argument('--posterior', default='factorised', type=str, help='Posterior factorised|first-order|recurrent|hierarchical')
 
 
 def get_device(cuda=True):
@@ -68,7 +69,7 @@ def main():
     # Load model
     vrslds = VRSLDS(obs_dim=obs_dim, discr_dim=args.discr_dim, cont_dim=args.cont_dim,
                     hidden_dim=args.hidden_dim, num_rec_layers=args.num_enc_layers, 
-                    beta=args.beta, SB=args.SB).float().to(device)
+                    beta=args.beta, SB=args.SB, posterior=args.posterior).float().to(device)
     print(vrslds)
     if args.load is not None:
         vrslds.load_state_dict(torch.load(args.load)['vrnn'])
