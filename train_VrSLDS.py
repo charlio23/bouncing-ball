@@ -153,6 +153,7 @@ def main():
                     ax2.plot(y[0,:,0],y[0,:,1])
                     ax2.scatter(y_pred[0,:,0],y_pred[0,:,1])
                     if args.predict:
+                        y_pred_seq = y_pred_seq.detach().cpu()
                         ax2.scatter(y_pred_seq[0,:,0],y_pred_seq[0,:,1])
                     writer.add_figure('data/true_observation', fig_real, i + epoch*len(train_loader))
         scheduler.step()
