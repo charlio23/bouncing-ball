@@ -7,7 +7,7 @@ from utils.losses import kl_categorical, kl_categorical_uniform, kld_loss, kld_l
 
 class VRSLDS(nn.Module):
     def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=0.5, 
-                 bidirectional=True, beta=1, SB=False, posterior='first-order',
+                 bidirectional=True, beta=1, SB=False, posterior='first-order', nonlinear=False,
                  full_montecarlo=False):
         super(VRSLDS, self).__init__()
         self.obs_dim = obs_dim
@@ -21,6 +21,8 @@ class VRSLDS(nn.Module):
         self.SB = SB
         # Posterior factorised|first-order|recurrent|hierarchical
         self.posterior = posterior
+        # Make transitions nonlinear
+        self.nonlinear = nonlinear
         self.full_montecarlo = full_montecarlo
 
         # Network parameters
@@ -49,17 +51,15 @@ class VRSLDS(nn.Module):
         self.A = nn.ModuleList([
             nn.Linear(cont_dim, cont_dim) for i in range(self.discr_dim)
         ])
-        self.R = nn.ModuleList([
-            nn.Linear(cont_dim, (discr_dim-1) if SB else discr_dim) for i in range(self.discr_dim)
-        ])
-        self._init_weights()
-
-    def _init_weights(self):
-        for i in range(self.discr_dim):
-            self.R[i].weight.data.fill_(1e-5)
-            self.R[i].bias.data.fill_(1/self.discr_dim)
-
-            self.A[i].weight.data.fill_(0)
+        if self.nonlinear:
+            self.SB = False
+            self.R = nn.ModuleList([
+                MLP(cont_dim, hidden_dim, discr_dim) for i in range(self.discr_dim)
+            ])        
+        else:
+            self.R = nn.ModuleList([
+                nn.Linear(cont_dim, (discr_dim-1) if SB else discr_dim) for i in range(self.discr_dim)
+            ])
 
     def _inference(self, x):
         x = self.encoder(x)

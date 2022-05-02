@@ -36,7 +36,7 @@ parser.add_argument('--load', action='store', type=str, required=False, help='Pa
 parser.add_argument('--SB', action='store_true', help='Use image video as input')
 parser.add_argument('--experiment', default='ball', type=str, help='Experiment ball|nascar|video')
 parser.add_argument('--posterior', default='factorised', type=str, help='Posterior factorised|first-order|recurrent|hierarchical')
-
+parser.add_argument('--nonlinear', action='store_true', help='Make interactions nonlinear')
 
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
@@ -49,7 +49,7 @@ def main():
     global args, writer
     torch.autograd.anomaly_mode.set_detect_anomaly(True)
     args = parser.parse_args()
-    writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs_VrSLDS_" + args.experiment, args.name))
+    writer = SummaryWriter(log_dir=os.path.join("/data2/users/cb221/runs_VrSLDS_" + args.experiment + "_fast_2", args.name))
     print(args)
     # Set up writers and device
     device = get_device()
@@ -69,7 +69,8 @@ def main():
     # Load model
     vrslds = VRSLDS(obs_dim=obs_dim, discr_dim=args.discr_dim, cont_dim=args.cont_dim,
                     hidden_dim=args.hidden_dim, num_rec_layers=args.num_enc_layers, 
-                    beta=args.beta, SB=args.SB, posterior=args.posterior).float().to(device)
+                    beta=args.beta, SB=args.SB, posterior=args.posterior,
+                    nonlinear=args.nonlinear).float().to(device)
     print(vrslds)
     if args.load is not None:
         vrslds.load_state_dict(torch.load(args.load)['vrnn'])
