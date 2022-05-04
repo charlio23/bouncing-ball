@@ -75,7 +75,7 @@ class ResidualBlock(nn.Module):
 
 
 class CNNResidualDecoder(nn.Module):
-    def __init__(self, latent_dim):
+    def __init__(self, latent_dim, out_dim=3):
         super(CNNResidualDecoder, self).__init__()
         self.latent_dim = latent_dim
         self.first_mlp = MLP(latent_dim, latent_dim, latent_dim*4*4)
@@ -84,7 +84,7 @@ class CNNResidualDecoder(nn.Module):
             ResidualBlock(input_channels=64)
         for i in range(2)])
         self.out_conv = nn.Conv2d(in_channels=64,
-                                  out_channels=3,
+                                  out_channels=out_dim,
                                   kernel_size=3,
                                   stride=1,
                                   padding=1)
