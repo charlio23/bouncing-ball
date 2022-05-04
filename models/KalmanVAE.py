@@ -65,15 +65,12 @@ class KalmanVAE(nn.Module):
         
         print(A_t.size(), C_t.size())
         return A_t, C_t
-        
-        
 
-
-    def filter_posterior(self, obs, A, C):
-        # obs: (B ,T, N)
+    def _filter_posterior(self, obs, A, C):
+        # obs: (T ,B, N)
         # A: (T, D, D)
         # C: (T, N, D)
-        (B, T, _) = obs.size()
+        (T, B, _) = obs.size()
         mu_filt = torch.zeros(T, B, self.latent_dim, 1).to(obs.device)
         Sigma_filt = torch.zeros(T, B, self.latent_dim, self.latent_dim).to(obs.device)
         obs = obs.unsqueeze(-1)
@@ -83,35 +80,31 @@ class KalmanVAE(nn.Module):
         mu_pred = torch.zeros_like(mu_filt)
         Sigma_pred = torch.zeros_like(Sigma_filt)
 
-        mu_pred[0] = mu_t
-        Sigma_pred[0] = Sigma_t
-
         for t in range(T):
 
-            y_pred = torch.matmul(C[:,t,:,:], mu_t)
-            r = obs - y_pred
+            mu_pred[t] = mu_t
+            Sigma_pred[t] = Sigma_t
 
+            y_pred = torch.matmul(C[:,t,:,:], mu_t)
+            r = obs[t] - y_pred
             S_t = torch.matmul(torch.matmul(C[:,t,:,:], Sigma_t), torch.transpose(C[:,t,:,:], 1,2))
             S_t += self.R
 
             Kalman_gain = torch.matmul(torch.matmul(Sigma_t, torch.transpose(C[:,t,:,:], 1,2)), torch.inverse(S_t))       
-        
             mu_z = mu_t + torch.matmul(Kalman_gain, r)
             I = torch.eye(self.latent_dim).to(obs.device)
             Sigma_z = torch.matmul((I - torch.matmul(Kalman_gain, C[:,t,:,:])), Sigma_t)
 
-            mu_t = torch.matmul(A[:,t,:,:], mu_pred)
-            Sigma_t = torch.matmul(torch.matmul(A[:,t,:,:], Sigma_t), torch.transpose(A[:,t,:,:], 1,2))
+            mu_t = torch.matmul(A[:,t,:,:], mu_z)
+            Sigma_t = torch.matmul(torch.matmul(A[:,t,:,:], Sigma_z), torch.transpose(A[:,t,:,:], 1,2))
             Sigma_t += self.Q
 
             mu_filt[t] = mu_z
             Sigma_filt[t] = Sigma_z
-            mu_pred[t] = mu_t
-            Sigma_pred[t] = Sigma_t
 
         return (mu_filt, Sigma_filt), (mu_pred, Sigma_pred)
     
-    def smooth_posterior(self, A, filtered, prediction):
+    def _smooth_posterior(self, A, filtered, prediction):
         mu_filt, Sigma_filt = filtered
         mu_pred, Sigma_pred = prediction
         (T, *_) = mu_filt.size()
@@ -131,8 +124,12 @@ class KalmanVAE(nn.Module):
         
         return mu_z_smooth, Sigma_z_smooth
 
-    def kalman_posterior(self, obs):
-        return
+    def _kalman_posterior(self, obs):
+        # obs: (T ,B, N)
+        A, C = self._interpolate_matrices(obs)
+        filtered, pred = self._filter_posterior(obs.transpose(0,1), A, C)
+        smoothed = self._smooth_posterior(A, filtered, pred)
+        return smoothed
 
     def _decode(self, z):
         x = self.decoder(z)
@@ -154,8 +151,7 @@ class KalmanVAE(nn.Module):
         x = x.reshape(B*T,C,H,W)
         a_sample, a_mu, a_log_var = self._encode_obs(x, variational)
         a_sample = a_sample.reshape(B,T,-1)
-        A, C = self._interpolate_matrices(a_sample)
-        self.filter_posterior(a_sample, A, C)
+        smoothed = self._kalman_posterior(a_sample)
         x_hat = self._decode(a_sample.reshape(B*T,-1))
 
         return x_hat, a_mu, a_log_var
