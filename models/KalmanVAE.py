@@ -129,34 +129,32 @@ class KalmanVAE(nn.Module):
         A, C = self._interpolate_matrices(obs)
         filtered, pred = self._filter_posterior(obs.transpose(0,1), A, C)
         smoothed = self._smooth_posterior(A, filtered, pred)
-        return smoothed
+        return smoothed, A, C
 
     def _decode(self, z):
         x = self.decoder(z)
         return x
 
     def _decode_latent(self, z_sample, A, C):
-        
-        z_next = torch.matmul(A, z_sample)
-        a_next = torch.matmul(C, z_sample)
-
+        (T, B, *_) = z_sample.size()
+        z_next = torch.matmul(A, z_sample.unsqueeze(-1)).squeeze(-1)
+        a_next = torch.matmul(C, z_sample.unsqueeze(-1)).squeeze(-1)
         return a_next, z_next
 
     def _sample(self, size):
         eps = torch.normal(mean=torch.zeros(size))
         return self._decode(eps)
 
-    def _compute_elbo(self, input, x_hat, a_mu, a_log_var, a_sample, smoothed):
+    def _compute_elbo(self, x, x_hat, a_mu, a_log_var, a_sample, smoothed, A, C):
         # Fixed variance
         # Reconstruction Loss p(x_t | a_t)
         #nll = nll_gaussian_var_fixed(x_hat, input, variance=1e-4, add_const=False)
         # log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1)
         ## KL terms
         smoothed_mean, smoothed_cov = smoothed
-        print(smoothed_mean.size(), smoothed_cov.size())
-        smoothed_z = MultivariateNormal(smoothed_mean, smoothed_cov)
+        smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), scale_tril=torch.linalg.cholesky(smoothed_cov))
         z_sample = smoothed_z.sample()
-        a_pred, z_next = self._decode_latent(z_sample)
+        a_pred, z_next = self._decode_latent(z_sample, A, C)
         decoder_z = MultivariateNormal(torch.zeros(self.latent_dim), self.Q)
         decoder_z_0 = MultivariateNormal(self.mu_1, self.Sigma_1)
         decoder_a = MultivariateNormal(torch.zeros(self.obs_dim), self.R)
@@ -174,7 +172,7 @@ class KalmanVAE(nn.Module):
             'kld': kld,
             'elbo': elbo,
         }
-        return losses
+        return z_sample, losses
 
     def forward(self, x, variational=True):
         # Input is (B,T,C,H,W)
@@ -183,17 +181,17 @@ class KalmanVAE(nn.Module):
         x = x.reshape(B*T,C,H,W)
         a_sample, a_mu, a_log_var = self._encode_obs(x, variational)
         a_sample = a_sample.reshape(B,T,-1)
-        smoothed = self._kalman_posterior(a_sample)
+        smoothed, A, C = self._kalman_posterior(a_sample)
         x_hat = self._decode(a_sample.reshape(B*T,-1))
 
-        losses = self._compute_elbo(x, x_hat, a_mu, a_log_var, a_sample, smoothed)
+        z_sample, losses = self._compute_elbo(x, x_hat, a_mu, a_log_var, a_sample, smoothed, A, C)
         return x_hat, a_sample, z_sample, losses
 
 if __name__=="__main__":
     # Trial run
     net = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=2, latent_dim=4, num_modes=3)
 
-    sample = torch.rand((16,30,1,32,32))
+    sample = torch.rand((1,1,1,32,32))
     torch.autograd.set_detect_anomaly(True)
     x_hat, a_mu, a_log_var = net(sample)
     print(x_hat.size())
