@@ -6,7 +6,7 @@ from utils.sampling import gumbel_softmax, my_softmax
 from utils.losses import kl_categorical, kl_categorical_uniform, kld_loss, kld_loss_standard, nll_gaussian, nll_gaussian_var_fixed
 
 class VRSLDS(nn.Module):
-    def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=0.5, 
+    def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=1, 
                  bidirectional=True, beta=1, SB=False, posterior='first-order', nonlinear=False,
                  full_montecarlo=False):
         super(VRSLDS, self).__init__()
