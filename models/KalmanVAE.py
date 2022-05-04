@@ -1,9 +1,9 @@
-from ntpath import join
-from eagerpy import matmul
 import torch
 import torch.nn as nn
-from zmq import MULTICAST_MAXTPDU
+from torch.distributions import MultivariateNormal
+
 from modules import MLP, CNNEncoder, CNNResidualDecoder
+#from utils.losses import nll_gaussian_var_fixed, nll_gaussian
 
 class KalmanVAE(nn.Module):
     def __init__(self, input_dim, hidden_dim, obs_dim, latent_dim, num_modes):
@@ -135,14 +135,46 @@ class KalmanVAE(nn.Module):
         x = self.decoder(z)
         return x
 
+    def _decode_latent(self, z_sample, A, C):
+        
+        z_next = torch.matmul(A, z_sample)
+        a_next = torch.matmul(C, z_sample)
+
+        return a_next, z_next
+
     def _sample(self, size):
         eps = torch.normal(mean=torch.zeros(size))
         return self._decode(eps)
 
-    def compute_elbo(self):
+    def _compute_elbo(self, input, x_hat, a_mu, a_log_var, a_sample, smoothed):
+        # Fixed variance
+        # Reconstruction Loss p(x_t | a_t)
+        #nll = nll_gaussian_var_fixed(x_hat, input, variance=1e-4, add_const=False)
+        # log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1)
+        ## KL terms
+        smoothed_mean, smoothed_cov = smoothed
+        print(smoothed_mean.size(), smoothed_cov.size())
+        smoothed_z = MultivariateNormal(smoothed_mean, smoothed_cov)
+        z_sample = smoothed_z.sample()
+        a_pred, z_next = self._decode_latent(z_sample)
+        decoder_z = MultivariateNormal(torch.zeros(self.latent_dim), self.Q)
+        decoder_z_0 = MultivariateNormal(self.mu_1, self.Sigma_1)
+        decoder_a = MultivariateNormal(torch.zeros(self.obs_dim), self.R)
+        #log p(z_t| z_t-1)
+        kld = decoder_z.log_prob((z_sample[1:] - z_next[:-1])).mean(dim=1).sum()
+        kld += decoder_z_0.log_prob(z_sample[0]).mean(dim=0)
+        #log p(a_t| z_t)
+        kld += decoder_a.log_prob((a_sample - a_pred)).mean(dim=1).sum()
+        #log q(a_t| z_t)
+        #kld -= nll_gaussian(a_mu, a_log_var, a_sample)
+        kld -= smoothed_z.log_prob(z_sample).mean(dim=1).sum()
 
-        # ELBO: 
-        return
+        elbo = nll + kld
+        losses = {
+            'kld': kld,
+            'elbo': elbo,
+        }
+        return losses
 
     def forward(self, x, variational=True):
         # Input is (B,T,C,H,W)
@@ -154,7 +186,8 @@ class KalmanVAE(nn.Module):
         smoothed = self._kalman_posterior(a_sample)
         x_hat = self._decode(a_sample.reshape(B*T,-1))
 
-        return x_hat, a_mu, a_log_var
+        losses = self._compute_elbo(x, x_hat, a_mu, a_log_var, a_sample, smoothed)
+        return x_hat, a_sample, z_sample, losses
 
 if __name__=="__main__":
     # Trial run
