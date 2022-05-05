@@ -25,7 +25,10 @@ class BouncingBallDataLoader(Dataset):
         pos = sample['positions']
         pos = pos[:,:2]/128.0 - 1.0
         im = sample['images']
-        im = im.transpose((0,3,1,2))/255.0
+        if len(im.shape) == 3:
+            im = im[:,np.newaxis,:,:].astype(float)/255.0
+        else:
+            im = im.transpose((0,3,1,2))/255.0
         return im, pos
 
 

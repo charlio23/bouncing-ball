@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
 
-from models.modules import CNNEncoder, CNNResidualDecoder
+from models.modules import CNNEncoder, CNNResidualDecoder, CNNFastEncoder
 from utils.losses import nll_gaussian_var_fixed
 
 class KalmanVAE(nn.Module):
@@ -15,7 +15,7 @@ class KalmanVAE(nn.Module):
         self.num_modes = num_modes
         # Beta VAE-like loss: Nll + b*KLD
         self.beta = beta
-        self.encoder = CNNEncoder(self.input_dim, self.obs_dim, 4)
+        self.encoder = CNNFastEncoder(self.input_dim, self.obs_dim, 4)
         self.decoder = CNNResidualDecoder(self.obs_dim, self.input_dim)
 
         self.parameter_net = nn.LSTM(self.obs_dim, self.num_modes, 

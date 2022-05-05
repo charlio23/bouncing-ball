@@ -78,7 +78,7 @@ class CNNResidualDecoder(nn.Module):
     def __init__(self, latent_dim, out_dim=3):
         super(CNNResidualDecoder, self).__init__()
         self.latent_dim = latent_dim
-        self.first_mlp = MLP(latent_dim, latent_dim, latent_dim*4*4)
+        self.first_mlp = MLP(latent_dim, latent_dim*4, latent_dim*4*4)
         self.first_block = ResidualBlock(input_channels=latent_dim)
         self.residual_blocks = nn.ModuleList([
             ResidualBlock(input_channels=64)
@@ -97,6 +97,41 @@ class CNNResidualDecoder(nn.Module):
             x = residual_layer(x)
         x = torch.sigmoid(self.out_conv(x))
         return x
+
+class CNNFastEncoder(nn.Module):
+    def __init__(self, input_channels, output_dim, log_var=True):
+        super(CNNFastEncoder, self).__init__()
+        self.in_conv = nn.Conv2d(in_channels=input_channels,
+                                 out_channels=32,
+                                 kernel_size=3,
+                                 stride=1,
+                                 padding=1)
+        self.hidden_conv = nn.ModuleList([
+            nn.Conv2d(in_channels=32,
+                      out_channels=32,
+                      kernel_size=3,
+                      stride=2,
+                      padding=1)
+        for _ in range(2)])
+        self.out_conv = nn.Conv2d(in_channels=32,
+                                 out_channels=1,
+                                 kernel_size=1,
+                                 stride=1,
+                                 padding=0)
+        self.out_mean = MLP(64, 64, output_dim)
+        if log_var:
+            self.out_log_var = MLP(64, 64, output_dim)
+        else:
+            self.out_log_var = None
+    def forward(self, x):
+        x = F.relu(self.in_conv(x))
+        for hidden_layer in self.hidden_conv:
+            x = F.relu(hidden_layer(x))
+        x = F.relu(self.out_conv(x)).flatten(-3, -1)
+        if self.out_log_var is None:
+            return self.out_mean(x)
+        mean, log_var = self.out_mean(x), self.out_log_var(x)
+        return mean, log_var
 
 class CNNEncoder(nn.Module):
     def __init__(self, input_channels, output_dim, num_layers, log_var=True):
@@ -167,3 +202,9 @@ class CNNEncoderPosition(nn.Module):
         x = torch.cat([pos, x], dim=1)
         mean = self.out_mean(x)
         return mean
+
+if __name__=="__main__":
+    net = CNNFastEncoder(3, 2)
+    x = torch.randn((2,3,32,32))
+
+    print(net(x)[0].size())

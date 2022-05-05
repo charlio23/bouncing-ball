@@ -114,7 +114,8 @@ class BouncingBall2D(object):
             string_image = pygame.image.tostring(self._screen, 'RGB')
             temp_surf = pygame.image.fromstring(string_image,(256, 256),'RGB' )
             tmp_arr = pygame.surfarray.array3d(temp_surf)
-            image = cv2.resize(tmp_arr, dsize=(32, 32))
+            # Change to grayscale
+            image = cv2.cvtColor(cv2.resize(tmp_arr, dsize=(32, 32)), cv2.COLOR_RGB2GRAY)
             image_seq.append(image)
         positions = np.array(positions)
         image_seq = np.array(image_seq)
@@ -182,10 +183,11 @@ class BouncingBall2D(object):
         x = random.randint(50, 200)
         y = random.randint(50, 200)
         body.position = x, y
-        velocities = [(200, 200), (-200, 200), (-200, -100), (200, -200)]
-        #vx = random.uniform(-5,5)*50
-        #vy = random.randint(-5,5)*50
-        body.velocity = random.choice(velocities)
+        #velocities = [(200, 200), (-200, 200), (-200, -100), (200, -200)]
+        vx = random.uniform(-5,5)*50
+        vy = random.randint(-5,5)*50
+        #body.velocity = random.choice(velocities)
+        body.velocity = vx, vy
         shape = pymunk.Circle(body, radius, (0, 0))
         shape.elasticity = 1
         shape.density = 1
@@ -208,8 +210,10 @@ class BouncingBall2D(object):
         self.draw()
 
     def draw(self):
-            self._screen.fill(pygame.Color(50, 50, 50))
-            pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
+            #self._screen.fill(pygame.Color(50, 50, 50))
+            self._screen.fill(pygame.Color(255, 255, 255))
+            #pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
+            pygame.draw.circle(self._screen, pygame.Color(0,0,0),self._balls[0].body.position, 35)
             # Draw the static lines.
             for line in self.static_lines:
                 pygame.draw.lines(self._screen, pygame.Color(0,0,0), False, (line.a,line.b), 10)
