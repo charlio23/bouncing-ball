@@ -26,7 +26,7 @@ parser = argparse.ArgumentParser(description='Image VAE trainer')
 parser.add_argument('--name', required=True, type=str, help='Name of the experiment')
 parser.add_argument('--train_root', default='./dataset/train', type=str)
 parser.add_argument('--runs_path', default='/data2/users/cb221/runs_KVAE', type=str)
-parser.add_argument('--epochs', default=40, type=int, metavar='N', help='number of total epochs to run')
+parser.add_argument('--epochs', default=100, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--determ', action='store_true', help='Use VAE or deterministic AE')
 parser.add_argument('--beta', default=1, type=float,metavar='N', help='beta VAE param')
@@ -57,13 +57,13 @@ def main():
     variational = not args.determ
     # Load model
 
-    kvae = KalmanVAE(input_dim=3, hidden_dim=128, obs_dim=2, latent_dim=4, num_modes=3, beta=args.beta).float().cuda()
+    kvae = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=2, latent_dim=4, num_modes=3, beta=args.beta).float().cuda()
     print(kvae)
 
     # Set up optimizers
     optimizer = Adam(kvae.parameters(), lr=args.lr)
     gamma = 0.5
-    scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
+    scheduler = StepLR(optimizer, step_size=40, gamma=gamma)
 
     # Train Loop
     kvae.train()
@@ -71,7 +71,7 @@ def main():
         
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
-            sample = sample[0][:,:50]
+            sample = torch.mean(sample[0][:,:50], dim=2, keepdim=True)
             # Forward sample to network
             b, seq_len, C, H, W = sample.size()
             var = Variable(sample.float(), requires_grad=True).to(device)
