@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
 
-from models.modules import CNNFastDecoder, CNNFastEncoder
+from models.modules import CNNFastDecoder, CNNFastEncoder, MLP
 from utils.losses import nll_gaussian_var_fixed
 
 class KalmanVAE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, obs_dim, latent_dim, num_modes, beta=1):
+    def __init__(self, input_dim, hidden_dim, obs_dim, latent_dim, num_modes, beta=1, alpha='mlp'):
         super(KalmanVAE, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -15,15 +15,24 @@ class KalmanVAE(nn.Module):
         self.num_modes = num_modes
         # Beta VAE-like loss: Nll + b*KLD
         self.beta = beta
+        self.alpha = alpha
         self.encoder = CNNFastEncoder(self.input_dim, self.obs_dim)
         self.decoder = CNNFastDecoder(self.obs_dim, self.input_dim)
         #self.decoder = CNNResidualDecoder(self.obs_dim, self.input_dim)
 
         self.parameter_net = nn.LSTM(self.obs_dim, self.num_modes, 
-                                    1, batch_first=True)
+                                     1, batch_first=True)
+        if self.alpha=='mlp':
+            self.parameter_net = MLP(self.obs_dim, 16, self.num_modes)
+        else:
+            self.parameter_net = nn.LSTM(self.obs_dim, self.num_modes, 
+                                         1, batch_first=True)
+        for p in self.parameter_net.parameters():
+            p.requires_grad_(False)
 
         # Initial latent code a_0
         self.start_code = nn.Parameter(torch.randn(self.obs_dim))
+        self.state_dyn_net = None
         # Initial p(z_1) distribution
         self.mu_1 = nn.Parameter(torch.zeros(self.latent_dim))
         self.Sigma_1 = nn.Parameter(torch.eye(self.latent_dim))
@@ -43,6 +52,9 @@ class KalmanVAE(nn.Module):
             if isinstance(m, nn.Linear):
                 nn.init.xavier_normal_(m.weight.data)
                 m.bias.data.fill_(0.1)
+    def enable_all_grad(self):
+        for p in self.parameters():
+            p.requires_grad_(True)
 
     def _encode_obs(self, x, variational=True):
         (z_mu, z_log_var) = self.encoder(x)
@@ -58,9 +70,12 @@ class KalmanVAE(nn.Module):
         (B, T, _) = obs.size()
         code = self.start_code.reshape(1,1,-1)
         
-        joint_obs = torch.cat([code.expand(B,-1,-1),obs],dim=1)
-        dyn_emb, _ = self.parameter_net(joint_obs)
-        inter_weight = dyn_emb[:,:-1,:].softmax(-1).reshape(B*T,self.num_modes)
+        joint_obs = torch.cat([code.expand(B,-1,-1),obs[:,:-1,:]],dim=1)
+        if self.alpha=='mlp':
+            dyn_emb = self.parameter_net(joint_obs.reshape(B*T, -1))
+        else:
+            dyn_emb, self.state_dyn_net = self.parameter_net(joint_obs).reshape(B*T,self.num_modes)
+        inter_weight = dyn_emb.softmax(-1)
         A_t = torch.matmul(inter_weight, self.A.reshape(self.num_modes,-1)).reshape(B,T,self.latent_dim,self.latent_dim)
         C_t = torch.matmul(inter_weight, self.C.reshape(self.num_modes,-1)).reshape(B,T,self.obs_dim,self.latent_dim)
         
@@ -124,10 +139,12 @@ class KalmanVAE(nn.Module):
         
         return mu_z_smooth, Sigma_z_smooth
 
-    def _kalman_posterior(self, obs):
+    def _kalman_posterior(self, obs, filter_only=False):
         # obs: (T ,B, N)
         A, C = self._interpolate_matrices(obs)
         filtered, pred = self._filter_posterior(obs.transpose(0,1), A, C)
+        if filter_only:
+            return filtered, A, C
         smoothed = self._smooth_posterior(A, filtered, pred)
         return smoothed, A, C
 
@@ -154,7 +171,11 @@ class KalmanVAE(nn.Module):
         nll = nll_gaussian_var_fixed(x_hat, x, variance=1e-4, add_const=False)
         ## KL terms
         smoothed_mean, smoothed_cov = smoothed
-        smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), scale_tril=torch.tril(smoothed_cov))
+        try:
+            smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), scale_tril=torch.tril(smoothed_cov))
+        except:
+            print("Smoothed distrib error found!")
+            smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), scale_tril=torch.tril(torch.ones_like(smoothed_cov)))
         z_sample = smoothed_z.sample()
         a_pred, z_next = self._decode_latent(z_sample, A, C)
         decoder_z = MultivariateNormal(torch.zeros(self.latent_dim).to(x.device), scale_tril=torch.tril(self.Q))
@@ -199,12 +220,57 @@ class KalmanVAE(nn.Module):
         z_sample, losses = self._compute_elbo(x, x_hat, a_mu, a_log_var, a_sample.transpose(0,1), smoothed, A_t, C_t)
         return x_hat, a_sample, z_sample, losses
 
+    def predict_sequence(self, input, seq_len=None):
+        (B,T,C,H,W) = input.size()
+        if seq_len is None:
+            seq_len = T
+        a_sample, _, _ = self._encode_obs(input.reshape(B*T,C,H,W))
+        a_sample = a_sample.reshape(B,T,-1)
+        filt, A_t, C_t = self._kalman_posterior(a_sample, filter_only=True)
+        filt_mean, filt_cov = filt
+        try:
+            filt_z = MultivariateNormal(filt_mean[-1].squeeze(-1), scale_tril=torch.tril(filt_cov[-1]))
+        except:
+            print("Smoothed distrib error found!")
+            filt_z = MultivariateNormal(filt_mean[-1].squeeze(-1), scale_tril=torch.tril(torch.ones_like(filt_cov[-1])))
+        z_sample = filt_z.sample()
+        _shape = [a_sample.size(i) if i!=1 else seq_len for i in range(len(a_sample.size()))]
+        obs_seq = torch.zeros(_shape).to(input.device)
+        _shape = [z_sample.unsqueeze(1).size(i) if i!=1 else seq_len for i in range(len(a_sample.size()))]
+        latent_seq = torch.zeros(_shape).to(input.device)
+        latent_prev = z_sample
+        obs_prev = a_sample[:,-1]
+        for t in range(seq_len):
+            # Compute alpha from a_0:t-1
+            if self.alpha=='mlp':
+                dyn_emb = self.parameter_net(obs_prev)
+            else:
+                alpha_, cell_state = self.state_dyn_net
+                dyn_emb, self.state_dyn_net = self.parameter_net(obs_prev.unsqueeze(1), (alpha_, cell_state))
+            inter_weight = dyn_emb.softmax(-1).squeeze(1)
+            ## Compute A_t, C_t
+            A_t = torch.matmul(inter_weight, self.A.reshape(self.num_modes,-1)).reshape(B,self.latent_dim,self.latent_dim)
+            C_t = torch.matmul(inter_weight, self.C.reshape(self.num_modes,-1)).reshape(B,self.obs_dim,self.latent_dim)
+
+            # Calculate new z_t
+            ## Update z_t
+            latent_prev = torch.matmul(A_t, latent_prev.unsqueeze(-1)).squeeze(-1)
+            latent_seq[:,t] = latent_prev
+            # Calculate new a_t
+            obs_prev = torch.matmul(C_t, latent_prev.unsqueeze(-1)).squeeze(-1)
+            obs_seq[:,t] = obs_prev
+
+        image_seq = self._decode(obs_seq.reshape(B*seq_len,-1)).reshape(B,seq_len,C,H,W)
+
+        return image_seq, obs_seq, latent_seq
+
 if __name__=="__main__":
     # Trial run
-    net = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=2, latent_dim=4, num_modes=3).cuda()
+    net = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=2, latent_dim=4, num_modes=3)
     from torch.autograd import Variable
-    sample = Variable(torch.rand((4,10,1,32,32)), requires_grad=True).cuda()
+    sample = Variable(torch.rand((6,10,1,32,32)), requires_grad=True)
     torch.autograd.set_detect_anomaly(True)
+    image_seq, obs_seq, latent_seq = net.predict_sequence(sample, 10)
     x_hat, a_mu, a_log_var, losses = net(sample)
     loss = losses['elbo']
     loss.backward()
