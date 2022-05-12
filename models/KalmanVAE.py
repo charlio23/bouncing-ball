@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.distributions import MultivariateNormal
+from torch.distributions import MultivariateNormal, Normal, Bernoulli
 
 from models.modules import CNNFastDecoder, CNNFastEncoder, MLP
 from utils.losses import nll_gaussian_var_fixed
@@ -19,29 +19,25 @@ class KalmanVAE(nn.Module):
         self.encoder = CNNFastEncoder(self.input_dim, self.obs_dim)
         self.decoder = CNNFastDecoder(self.obs_dim, self.input_dim)
         #self.decoder = CNNResidualDecoder(self.obs_dim, self.input_dim)
-
-        self.parameter_net = nn.LSTM(self.obs_dim, self.num_modes, 
-                                     1, batch_first=True)
         if self.alpha=='mlp':
-            self.parameter_net = MLP(self.obs_dim, 16, self.num_modes)
+            self.parameter_net = MLP(self.obs_dim, 50, self.num_modes)
         else:
-            self.parameter_net = nn.LSTM(self.obs_dim, self.num_modes, 
-                                         1, batch_first=True)
-        for p in self.parameter_net.parameters():
-            p.requires_grad_(False)
+            self.parameter_net = nn.LSTM(self.obs_dim, 32, 
+                                         2, batch_first=True)
+            self.alpha_out = nn.Linear(32, self.num_modes)
 
         # Initial latent code a_0
-        self.start_code = nn.Parameter(torch.randn(self.obs_dim))
+        self.start_code = nn.Parameter(torch.zeros(self.obs_dim))
         self.state_dyn_net = None
         # Initial p(z_1) distribution
-        self.mu_1 = nn.Parameter(torch.zeros(self.latent_dim))
-        self.Sigma_1 = nn.Parameter(torch.eye(self.latent_dim))
+        self.mu_1 = (torch.zeros(self.latent_dim)).cuda()
+        self.Sigma_1 = (20*torch.eye(self.latent_dim)).cuda()
         # Matrix modes
         self.A = nn.Parameter(torch.eye(self.latent_dim).unsqueeze(0).repeat(self.num_modes,1,1))
-        self.C = nn.Parameter(torch.randn(self.num_modes, self.obs_dim, self.latent_dim))
+        self.C = nn.Parameter(torch.randn(self.num_modes, self.obs_dim, self.latent_dim)*0.05)
 
-        self.Q = nn.Parameter(torch.eye(self.latent_dim))
-        self.R = nn.Parameter(torch.eye(self.obs_dim))
+        self.Q = 0.08*torch.eye(self.latent_dim).cuda()
+        self.R = 0.03*torch.eye(self.obs_dim).cuda()
 
 
 
@@ -52,9 +48,6 @@ class KalmanVAE(nn.Module):
             if isinstance(m, nn.Linear):
                 nn.init.xavier_normal_(m.weight.data)
                 m.bias.data.fill_(0.1)
-    def enable_all_grad(self):
-        for p in self.parameters():
-            p.requires_grad_(True)
 
     def _encode_obs(self, x, variational=True):
         (z_mu, z_log_var) = self.encoder(x)
@@ -103,16 +96,18 @@ class KalmanVAE(nn.Module):
             y_pred = torch.matmul(C[:,t,:,:], mu_t)
             r = obs[t] - y_pred
             S_t = torch.matmul(torch.matmul(C[:,t,:,:], Sigma_t), torch.transpose(C[:,t,:,:], 1,2))
-            S_t += self.R
+            S_t += self.R.unsqueeze(0)
 
             Kalman_gain = torch.matmul(torch.matmul(Sigma_t, torch.transpose(C[:,t,:,:], 1,2)), torch.inverse(S_t))       
             mu_z = mu_t + torch.matmul(Kalman_gain, r)
-            I = torch.eye(self.latent_dim).to(obs.device)
-            Sigma_z = torch.matmul((I - torch.matmul(Kalman_gain, C[:,t,:,:])), Sigma_t)
+            I_ = torch.eye(self.latent_dim).to(obs.device) - torch.matmul(Kalman_gain, C[:,t,:,:])
+            Sigma_z = torch.matmul(I_, Sigma_t)
+            #Sigma_z = torch.matmul(torch.matmul(I_, Sigma_t), torch.transpose(I_, 1,2))
+            #Sigma_z += torch.matmul(torch.matmul(Kalman_gain, self.R.unsqueeze(0)), torch.transpose(Kalman_gain, 1,2))
 
             mu_t = torch.matmul(A[:,t,:,:], mu_z)
             Sigma_t = torch.matmul(torch.matmul(A[:,t,:,:], Sigma_z), torch.transpose(A[:,t,:,:], 1,2))
-            Sigma_t += self.Q
+            Sigma_t += self.Q.unsqueeze(0)
 
             mu_filt[t] = mu_z
             Sigma_filt[t] = Sigma_z
@@ -168,7 +163,9 @@ class KalmanVAE(nn.Module):
         # min: -ELBO =  - log p(x_t|a_t) + log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1)
         # Fixed variance
         # Reconstruction Loss p(x_t | a_t)
-        nll = nll_gaussian_var_fixed(x_hat, x, variance=1e-4, add_const=False)
+        decoder_x = Bernoulli(x_hat)
+
+        nll = -decoder_x.log_prob(x).mean(dim=0).sum()
         ## KL terms
         smoothed_mean, smoothed_cov = smoothed
         try:
@@ -193,7 +190,7 @@ class KalmanVAE(nn.Module):
         kld += smoothed_z.log_prob(z_sample).mean(dim=1).sum()
 
         elbo = kld + nll
-        loss = self.beta*kld + nll
+        loss = self.beta*kld + nll*0.3
         losses = {
             'kld': kld,
             'elbo': elbo,
@@ -213,7 +210,6 @@ class KalmanVAE(nn.Module):
         a_log_var = a_log_var.reshape(B,T,-1)
         # q(z|a)
         smoothed, A_t, C_t = self._kalman_posterior(a_sample)
-
         # p(x_t|a_t)
         x_hat = self._decode(a_sample.reshape(B*T,-1)).reshape(B,T,C,H,W)
         # ELBO

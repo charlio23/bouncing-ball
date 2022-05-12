@@ -34,6 +34,7 @@ parser.add_argument('--lr', default=5e-4, type=float, metavar='N', help='learnin
 parser.add_argument('--latent_dim', default=32, type=int, metavar='N', help='dimension of latent space')
 parser.add_argument('--seq_len', default=50, type=int, metavar='N', help='length of input sequene')
 parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
+parser.add_argument('--kf_steps', default=1, type=int, metavar='N', help='steps to wait before training alpha network')
 
 
 def get_device(cuda=True):
@@ -67,23 +68,29 @@ def main():
         print("=> Model loaded successfully")
 
     # Set up optimizers
-    optimizer = Adam(kvae.parameters(), lr=args.lr)
-    gamma = 0.5
-    scheduler = StepLR(optimizer, step_size=15, gamma=gamma)
-
+    kvae_params = list(kvae.encoder.parameters()) + list(kvae.decoder.parameters()) + [kvae.A, kvae.C, kvae.start_code]
+    optimizer = Adam(kvae_params, lr=args.lr)
+    gamma = 0.85
+    scheduler = StepLR(optimizer, step_size=20, gamma=gamma)
+    changed = False
     # Train Loop
     kvae.train()
     for epoch in range(0, args.epochs):
-        
+        if epoch >= args.kf_steps and not changed:
+            changed = True
+            optimizer = Adam(kvae.parameters(), lr=args.lr)
+            scheduler = StepLR(optimizer, step_size=20, gamma=gamma)
+            scheduler.last_epoch = epoch
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
             # Forward sample to network
             b, seq_len, C, H, W = sample[0][:,:args.seq_len].size()
-            var = Variable(sample[0][:,:args.seq_len].float(), requires_grad=True).to(device)
+            var = (Variable(sample[0][:,:args.seq_len].float(), requires_grad=True).to(device) > 0.5).float()
             optimizer.zero_grad()
             x_hat, a_mu, _, losses = kvae(var, variational=variational)
             # Compute loss and optimize params
             losses['loss'].backward()
+            torch.nn.utils.clip_grad_norm_(kvae.parameters(), 150)
             optimizer.step()
             
             mse = F.mse_loss(x_hat, var, reduction='sum')/(b)
@@ -114,10 +121,10 @@ def main():
                 ax1 = fig_inferred.add_subplot(1,1,1)
                 a_mu = a_mu.detach().cpu()
                 obs_seq = obs_seq.detach().cpu()
-                real_pos = sample[1][0,:args.seq_len*2].float()
+                #real_pos = sample[1][0,:args.seq_len*2].float()
                 ax1.scatter(a_mu[0,:,0],a_mu[0,:,1])
                 ax1.scatter(obs_seq[0,:,0],obs_seq[0,:,1])
-                ax1.plot(real_pos[:,0],real_pos[:,1])
+                #ax1.plot(real_pos[:,0],real_pos[:,1])
                 video_tensor_predict = pred_pos.detach().cpu()
                 video_tensor_predict_true = sample[0][:,args.seq_len:args.seq_len*2].float().detach().cpu()
                 writer.add_figure('data/inferred_latent_cont_state', fig_inferred, i + epoch*len(train_loader))
@@ -128,9 +135,6 @@ def main():
             'epoch': epoch,
             'kvae': kvae.state_dict()
         }, filename=args.name)
-
-        kvae.enable_all_grad()
-
 
 if __name__=="__main__":
     main()
