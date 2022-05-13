@@ -35,6 +35,7 @@ parser.add_argument('--latent_dim', default=32, type=int, metavar='N', help='dim
 parser.add_argument('--seq_len', default=50, type=int, metavar='N', help='length of input sequene')
 parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
 parser.add_argument('--kf_steps', default=1, type=int, metavar='N', help='steps to wait before training alpha network')
+parser.add_argument('--alpha', default='mlp', type=str, help='Alpha network type (mlp|rnn)')
 
 
 def get_device(cuda=True):
@@ -60,7 +61,9 @@ def main():
     variational = not args.determ
     # Load model
 
-    kvae = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=2, latent_dim=4, num_modes=3, beta=args.beta).float().cuda()
+    kvae = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=2, 
+                     latent_dim=4, num_modes=3, beta=args.beta, 
+                     alpha=args.alpha).float().cuda()
     print(kvae)
     if args.load is not None:
         kvae.load_state_dict(torch.load(args.load)['kvae'])
@@ -73,6 +76,7 @@ def main():
     gamma = 0.85
     scheduler = StepLR(optimizer, step_size=20, gamma=gamma)
     changed = False
+    clip = 100
     # Train Loop
     kvae.train()
     for epoch in range(0, args.epochs):
@@ -80,7 +84,6 @@ def main():
             changed = True
             optimizer = Adam(kvae.parameters(), lr=args.lr)
             scheduler = StepLR(optimizer, step_size=20, gamma=gamma)
-            scheduler.last_epoch = epoch
         end = time.time()
         for i, sample in enumerate(train_loader, 1):
             # Forward sample to network
@@ -90,7 +93,7 @@ def main():
             x_hat, a_mu, _, losses = kvae(var, variational=variational)
             # Compute loss and optimize params
             losses['loss'].backward()
-            torch.nn.utils.clip_grad_norm_(kvae.parameters(), 150)
+            torch.nn.utils.clip_grad_norm_(kvae.parameters(), clip)
             optimizer.step()
             
             mse = F.mse_loss(x_hat, var, reduction='sum')/(b)

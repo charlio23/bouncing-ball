@@ -1,3 +1,5 @@
+from pickle import TRUE
+from matplotlib import use
 import numpy as np
 import torch
 import torch.nn as nn
@@ -35,10 +37,10 @@ class KalmanVAE(nn.Module):
         self.Sigma_1 = (20*torch.eye(self.latent_dim)).cuda()
         # Matrix modes
         self.A = nn.Parameter(torch.eye(self.latent_dim).unsqueeze(0).repeat(self.num_modes,1,1))
-        self.C = nn.Parameter(torch.randn(self.num_modes, self.obs_dim, self.latent_dim)*0.5)
+        self.C = nn.Parameter(torch.randn(self.num_modes, self.obs_dim, self.latent_dim)*0.05)
 
-        self.Q = 0.8*torch.eye(self.latent_dim).cuda()
-        self.R = 0.3*torch.eye(self.obs_dim).cuda()
+        self.Q = 0.08*torch.eye(self.latent_dim).cuda()
+        self.R = 0.03*torch.eye(self.obs_dim).cuda()
 
 
 
@@ -68,7 +70,8 @@ class KalmanVAE(nn.Module):
         if self.alpha=='mlp':
             dyn_emb = self.parameter_net(joint_obs.reshape(B*T, -1))
         else:
-            dyn_emb, self.state_dyn_net = self.parameter_net(joint_obs).reshape(B*T,self.num_modes)
+            dyn_emb, self.state_dyn_net = self.parameter_net(joint_obs)
+            dyn_emb = self.alpha_out(dyn_emb.reshape(B*T,32))
         inter_weight = dyn_emb.softmax(-1)
         A_t = torch.matmul(inter_weight, self.A.reshape(self.num_modes,-1)).reshape(B,T,self.latent_dim,self.latent_dim)
         C_t = torch.matmul(inter_weight, self.C.reshape(self.num_modes,-1)).reshape(B,T,self.obs_dim,self.latent_dim)
@@ -80,38 +83,43 @@ class KalmanVAE(nn.Module):
         # A: (T, D, D)
         # C: (T, N, D)
         (T, B, _) = obs.size()
-        mu_filt = torch.zeros(T, B, self.latent_dim, 1).to(obs.device).double()
-        Sigma_filt = torch.zeros(T, B, self.latent_dim, self.latent_dim).to(obs.device).double()
-        obs = obs.unsqueeze(-1).double()
-        mu_t = self.mu_1.expand(B,-1).unsqueeze(-1).double()
-        Sigma_t = self.Sigma_1.expand(B,-1,-1).double()
+        mu_filt = torch.zeros(T, B, self.latent_dim, 1).to(obs.device)
+        Sigma_filt = torch.zeros(T, B, self.latent_dim, self.latent_dim).to(obs.device)
+        obs = obs.unsqueeze(-1)
+        mu_t = self.mu_1.expand(B,-1).unsqueeze(-1)
+        Sigma_t = self.Sigma_1.expand(B,-1,-1)
 
-        mu_pred = torch.zeros_like(mu_filt).double()
-        Sigma_pred = torch.zeros_like(Sigma_filt).double()
+        mu_pred = torch.zeros_like(mu_filt)
+        Sigma_pred = torch.zeros_like(Sigma_filt)
 
         for t in range(T):
-
+            
+            # mu/sigma: t | t-1
             mu_pred[t] = mu_t
             Sigma_pred[t] = Sigma_t
 
             y_pred = torch.matmul(C[:,t,:,:], mu_t)
             r = obs[t] - y_pred
             S_t = torch.matmul(torch.matmul(C[:,t,:,:], Sigma_t), torch.transpose(C[:,t,:,:], 1,2))
-            S_t += self.R.unsqueeze(0).double()
+            S_t += self.R.unsqueeze(0)
 
             Kalman_gain = torch.matmul(torch.matmul(Sigma_t, torch.transpose(C[:,t,:,:], 1,2)), torch.inverse(S_t))       
+            # filter: t | t
             mu_z = mu_t + torch.matmul(Kalman_gain, r)
+            
             I_ = torch.eye(self.latent_dim).to(obs.device) - torch.matmul(Kalman_gain, C[:,t,:,:])
             #Sigma_z = torch.matmul(I_, Sigma_t)
-            Sigma_z = torch.matmul(torch.matmul(I_, Sigma_t), torch.transpose(I_, 1,2))
-            Sigma_z += torch.matmul(torch.matmul(Kalman_gain, self.R.unsqueeze(0).double()), torch.transpose(Kalman_gain, 1,2))
-
-            mu_t = torch.matmul(A[:,t,:,:], mu_z)
-            Sigma_t = torch.matmul(torch.matmul(A[:,t,:,:], Sigma_z), torch.transpose(A[:,t,:,:], 1,2))
-            Sigma_t += self.Q.unsqueeze(0).double()
-
+            Sigma_z = torch.matmul(torch.matmul(I_, Sigma_t), torch.transpose(I_, 1,2)) + torch.matmul(torch.matmul(Kalman_gain, self.R.unsqueeze(0)), torch.transpose(Kalman_gain, 1,2))
+            #Sigma_z = (Sigma_z + Sigma_z.transpose(1,2))/2
             mu_filt[t] = mu_z
             Sigma_filt[t] = Sigma_z
+            if t != T-1:
+                # mu/sigma: t+1 | t for next step
+                mu_t = torch.matmul(A[:,t+1,:,:], mu_z)
+                Sigma_t = torch.matmul(torch.matmul(A[:,t+1,:,:], Sigma_z), torch.transpose(A[:,t+1,:,:], 1,2))
+                Sigma_t += self.Q.unsqueeze(0)
+
+            
 
         return (mu_filt, Sigma_filt), (mu_pred, Sigma_pred)
     
@@ -119,29 +127,27 @@ class KalmanVAE(nn.Module):
         mu_filt, Sigma_filt = filtered
         mu_pred, Sigma_pred = prediction
         (T, *_) = mu_filt.size()
-        mu_z_smooth = torch.zeros_like(mu_filt).double()
-        Sigma_z_smooth = torch.zeros_like(Sigma_filt).double()
-
-        mu_z_smooth[-1] = mu_filt[-1].double()
-        Sigma_z_smooth[-1] = Sigma_filt[-1].double()
-
+        mu_z_smooth = torch.zeros_like(mu_filt)
+        Sigma_z_smooth = torch.zeros_like(Sigma_filt)
+        mu_z_smooth[-1] = mu_filt[-1]
+        Sigma_z_smooth[-1] = Sigma_filt[-1]
         for t in reversed(range(T-1)):
-            J = torch.matmul(torch.matmul(Sigma_filt[t], torch.transpose(A[:,t+1,:,:], 1,2)), torch.inverse(Sigma_pred[t+1]))
+            J = torch.matmul(Sigma_filt[t], torch.matmul(torch.transpose(A[:,t+1,:,:], 1,2), torch.inverse(Sigma_pred[t+1])))
             mu_diff = mu_z_smooth[t+1] - mu_pred[t+1]
             mu_z_smooth[t] = mu_filt[t] + torch.matmul(J, mu_diff)
 
             cov_diff = Sigma_z_smooth[t+1] - Sigma_pred[t+1]
             Sigma_z_smooth[t] = Sigma_filt[t] + torch.matmul(torch.matmul(J, cov_diff), torch.transpose(J, 1, 2))
         
-        return mu_z_smooth.float(), Sigma_z_smooth.float()
+        return mu_z_smooth, Sigma_z_smooth
 
     def _kalman_posterior(self, obs, filter_only=False):
-        # obs: (T ,B, N)
+        # obs: (B ,T, N)
         A, C = self._interpolate_matrices(obs)
-        filtered, pred = self._filter_posterior(obs.transpose(0,1), A.double(), C.double())
+        filtered, pred = self._filter_posterior(obs.transpose(0,1), A, C)
         if filter_only:
-            return (filtered[0].float(), filtered[1].float()), A, C
-        smoothed = self._smooth_posterior(A.double(), filtered, pred)
+            return filtered, A, C
+        smoothed = self._smooth_posterior(A, filtered, pred)
         return smoothed, A, C
 
     def _decode(self, z):
@@ -170,28 +176,24 @@ class KalmanVAE(nn.Module):
         ## KL terms
         smoothed_mean, smoothed_cov = smoothed
         (T, B, *_) = smoothed_cov.size()
-        eps = 1e-2*torch.eye(self.latent_dim).to(x.device).reshape(1,1,self.latent_dim,self.latent_dim).repeat(T, B, 1, 1).double()
-        try:
-            smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), scale_tril=torch.linalg.cholesky(smoothed_cov.double() + eps).float())
-        except:
-            print("Smooth distrib error!")
-            smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), scale_tril=torch.linalg.cholesky(eps).float())
-
+        smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), 
+                                        scale_tril=torch.linalg.cholesky(smoothed_cov))
         z_sample = smoothed_z.sample()
-        a_pred, z_next = self._decode_latent(z_sample, A, C)
         decoder_z = MultivariateNormal(torch.zeros(self.latent_dim).to(x.device), scale_tril=torch.linalg.cholesky(self.Q))
-        decoder_z_0 = MultivariateNormal(self.mu_1, scale_tril=torch.tril(self.Sigma_1))
+        decoder_z_0 = MultivariateNormal(self.mu_1, scale_tril=torch.linalg.cholesky(self.Sigma_1))
         decoder_a = MultivariateNormal(torch.zeros(self.obs_dim).to(x.device), scale_tril=torch.linalg.cholesky(self.R))
         q_a = MultivariateNormal(a_mu, torch.diag_embed(torch.exp(a_log_var)))
+
+        a_pred, z_next = self._decode_latent(z_sample, A, C)
         # -log p(z_t| z_t-1)
-        kld = -decoder_z.log_prob((z_sample[1:] - z_next[:-1])).mean(dim=1).sum()
-        kld -= decoder_z_0.log_prob(z_sample[0]).mean(dim=0)
+        kld = - decoder_z_0.log_prob(z_sample[0]).mean(dim=0)
+        kld -= decoder_z.log_prob((z_sample[1:] - z_next[:-1])).mean(dim=1).sum()
         # -log p(a_t| z_t)
         kld -= decoder_a.log_prob((a_sample - a_pred)).mean(dim=1).sum()
-        # log q(a)
-        kld += q_a.log_prob(a_sample.transpose(0,1)).mean(dim=0).sum()
         # log q(z)
         kld += smoothed_z.log_prob(z_sample).mean(dim=1).sum()
+        # log q(a)
+        kld += q_a.log_prob(a_sample.transpose(0,1)).mean(dim=0).sum()
 
         elbo = kld + nll
         loss = self.beta*kld + nll*0.3
@@ -244,6 +246,7 @@ class KalmanVAE(nn.Module):
             else:
                 alpha_, cell_state = self.state_dyn_net
                 dyn_emb, self.state_dyn_net = self.parameter_net(obs_prev.unsqueeze(1), (alpha_, cell_state))
+                dyn_emb = self.alpha_out(dyn_emb)
             inter_weight = dyn_emb.softmax(-1).squeeze(1)
             ## Compute A_t, C_t
             A_t = torch.matmul(inter_weight, self.A.reshape(self.num_modes,-1)).reshape(B,self.latent_dim,self.latent_dim)
