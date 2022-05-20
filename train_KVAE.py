@@ -26,7 +26,7 @@ parser = argparse.ArgumentParser(description='Image VAE trainer')
 parser.add_argument('--name', required=True, type=str, help='Name of the experiment')
 parser.add_argument('--train_root', default='./dataset/train', type=str)
 parser.add_argument('--runs_path', default='/data2/users/cb221/runs_KVAE', type=str)
-parser.add_argument('--epochs', default=100, type=int, metavar='N', help='number of total epochs to run')
+parser.add_argument('--epochs', default=80, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--determ', action='store_true', help='Use VAE or deterministic AE')
 parser.add_argument('--beta', default=1, type=float,metavar='N', help='beta VAE param')
@@ -90,6 +90,8 @@ def main():
             b, seq_len, C, H, W = sample[0][:,:args.seq_len].size()
             var = (Variable(sample[0][:,:args.seq_len].float(), requires_grad=True).to(device) > 0.5).float()
             optimizer.zero_grad()
+            #mask = torch.ones(b,seq_len).to(device)
+            #mask[:,7:14] = 0
             x_hat, a_mu, _, losses = kvae(var, variational=variational)
             # Compute loss and optimize params
             losses['loss'].backward()
