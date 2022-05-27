@@ -246,17 +246,19 @@ class KalmanVAE(nn.Module):
         eps = torch.normal(mean=torch.zeros(size))
         return self._decode(eps)
 
-    def _compute_elbo(self, x, mask, x_hat, a_mu, a_log_var, a_sample, smoothed, A, C):
-        (B, T, *_) = x.size()
-        if mask is None:
-            mask = torch.ones(B,T).to(x.device)
+    def _compute_elbo(self, x, mask_frames, mask_visual, x_hat, a_mu, a_log_var, a_sample, smoothed, A, C):
+        (B, T, C, H, W) = x.size()
+        if mask_frames is None:
+            mask_frames = torch.ones(B,T).to(x.device)
+        if mask_visual is None:
+            mask_visual = torch.ones(B, T, C, H, W)
         # max: ELBO = log p(x_t|a_t) - (log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1))
         # min: -ELBO =  - log p(x_t|a_t) + log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1)
         # Fixed variance
         # Reconstruction Loss p(x_t | a_t)
         decoder_x = Bernoulli(x_hat)
-        p_x = decoder_x.log_prob(x).reshape(B,T,-1).sum(-1)
-        nll = -(p_x*mask).mean(dim=0).sum()
+        p_x = (decoder_x.log_prob(x)*mask_visual).reshape(B,T,-1).sum(-1)
+        nll = -(p_x*mask_frames).mean(dim=0).sum()
         ## KL terms
         smoothed_mean, smoothed_cov = smoothed
         smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), 
@@ -272,14 +274,14 @@ class KalmanVAE(nn.Module):
         kld = - decoder_z_0.log_prob(z_sample[0]).mean(dim=0)
         kld -= decoder_z.log_prob((z_sample[1:] - z_next[:-1])).mean(dim=1).sum()
         # -log p(a_t| z_t)
-        kld -= (decoder_a.log_prob((a_sample - a_pred))*mask.transpose(0,1)).mean(dim=1).sum()
+        kld -= (decoder_a.log_prob((a_sample - a_pred))*mask_frames.transpose(0,1)).mean(dim=1).sum()
         # log q(z)
         kld += smoothed_z.log_prob(z_sample).mean(dim=1).sum()
         # log q(a)
-        kld += (q_a.log_prob(a_sample.transpose(0,1))*mask).mean(dim=0).sum()
+        kld += (q_a.log_prob(a_sample.transpose(0,1))*mask_frames).mean(dim=0).sum()
         
         elbo = kld + nll
-        loss = self.beta*kld + nll*0.3
+        loss = self.beta*kld + nll
         losses = {
             'kld': kld,
             'elbo': elbo,
@@ -288,7 +290,7 @@ class KalmanVAE(nn.Module):
         }
         return z_sample, losses
 
-    def forward(self, x, mask=None, variational=True):
+    def forward(self, x, mask_frames=None, mask_visual=None, variational=True):
         # Input is (B,T,C,H,W)
         # Autoencode
         (B,T,C,H,W) = x.size()
@@ -298,11 +300,11 @@ class KalmanVAE(nn.Module):
         a_mu = a_mu.reshape(B,T,-1)
         a_log_var = a_log_var.reshape(B,T,-1)
         # q(z|a)
-        smoothed, A_t, C_t = self._kalman_posterior(a_sample, mask)
+        smoothed, A_t, C_t = self._kalman_posterior(a_sample, mask_frames)
         # p(x_t|a_t)
         x_hat = self._decode(a_sample.reshape(B*T,-1)).reshape(B,T,C,H,W)
         # ELBO
-        z_sample, losses = self._compute_elbo(x, mask, x_hat, a_mu, a_log_var, a_sample.transpose(0,1), smoothed, A_t, C_t)
+        z_sample, losses = self._compute_elbo(x, mask_frames, mask_visual, x_hat, a_mu, a_log_var, a_sample.transpose(0,1), smoothed, A_t, C_t)
         return x_hat, a_sample, z_sample, losses
 
     def predict_sequence(self, input, seq_len=None):

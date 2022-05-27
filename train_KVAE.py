@@ -16,7 +16,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 
-from dataloaders.bouncing_data import BouncingBallDataLoader
+from dataloaders.bouncing_data import BouncingBallDataLoader, MissingBallDataset
 from utils.losses import kld_loss_standard
 from models.KalmanVAE import KalmanVAE
 
@@ -25,7 +25,7 @@ parser = argparse.ArgumentParser(description='Image VAE trainer')
 
 parser.add_argument('--name', required=True, type=str, help='Name of the experiment')
 parser.add_argument('--train_root', default='./dataset/train', type=str)
-parser.add_argument('--runs_path', default='/data2/users/cb221/runs_KVAE', type=str)
+parser.add_argument('--runs_path', default='/data2/users/cb221/runs_KVAE_harrison', type=str)
 parser.add_argument('--epochs', default=80, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('-b', '--batch-size', default=128, type=int,metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--determ', action='store_true', help='Use VAE or deterministic AE')
@@ -36,7 +36,7 @@ parser.add_argument('--seq_len', default=50, type=int, metavar='N', help='length
 parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
 parser.add_argument('--kf_steps', default=1, type=int, metavar='N', help='steps to wait before training alpha network')
 parser.add_argument('--alpha', default='mlp', type=str, help='Alpha network type (mlp|rnn)')
-
+parser.add_argument('--missing', action='store_true', help='Activate missing data')
 
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
@@ -54,15 +54,18 @@ def main():
     device = get_device()
     print("=> Using device: " + device)
     # Load dataset
-    dl = BouncingBallDataLoader(args.train_root, images=True)
+    if args.missing:
+        dl = MissingBallDataset(args.train_root)
+    else:
+        dl = BouncingBallDataLoader(args.train_root, images=True)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
     sample = next(iter(train_loader))[0].float()
     _, _, input_dim, *_ = sample.size()
     variational = not args.determ
     # Load model
 
-    kvae = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=2, 
-                     latent_dim=4, num_modes=3, beta=args.beta, 
+    kvae = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=4, 
+                     latent_dim=16, num_modes=8, beta=args.beta, 
                      alpha=args.alpha).float().cuda()
     print(kvae)
     if args.load is not None:
@@ -74,7 +77,7 @@ def main():
     kvae_params = list(kvae.encoder.parameters()) + list(kvae.decoder.parameters()) + [kvae.A, kvae.C, kvae.start_code]
     optimizer = Adam(kvae_params, lr=args.lr)
     gamma = 0.85
-    scheduler = StepLR(optimizer, step_size=20, gamma=gamma)
+    scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
     changed = False
     clip = 100
     # Train Loop
@@ -92,7 +95,11 @@ def main():
             optimizer.zero_grad()
             #mask = torch.ones(b,seq_len).to(device)
             #mask[:,7:14] = 0
-            x_hat, a_mu, _, losses = kvae(var, variational=variational)
+            if args.missing:
+                mask = sample[1][:,:args.seq_len].cuda()
+            else:
+                mask = None
+            x_hat, a_mu, _, losses = kvae(var, mask, variational=variational)
             # Compute loss and optimize params
             losses['loss'].backward()
             torch.nn.utils.clip_grad_norm_(kvae.parameters(), clip)
@@ -114,27 +121,27 @@ def main():
                     writer.add_scalar('data/kl_loss', losses['kld'], i + epoch*len(train_loader))
                 writer.add_scalar('data/elbo', losses['elbo'], i + epoch*len(train_loader))
                 writer.add_scalar('data/loss', losses['loss'], i + epoch*len(train_loader))
-            with torch.no_grad():
-                    pred_pos, obs_seq, _ = kvae.predict_sequence(var, seq_len=args.seq_len)
-                    target = sample[0][:,args.seq_len:args.seq_len*2].float().to(pred_pos.device)
-                    pred_mse = F.mse_loss(pred_pos, target, reduction='sum')/(args.batch_size)
-                    writer.add_scalar('data/prediction_loss', pred_mse, i + epoch*len(train_loader))
+            #with torch.no_grad():
+                    #pred_pos, obs_seq, _ = kvae.predict_sequence(var, seq_len=args.seq_len)
+                    #target = sample[0][:,args.seq_len:args.seq_len*2].float().to(pred_pos.device)
+                    #pred_mse = F.mse_loss(pred_pos, target, reduction='sum')/(args.batch_size)
+                    #writer.add_scalar('data/prediction_loss', pred_mse, i + epoch*len(train_loader))
             if i % 100 == 0:
                 writer.add_video('data/Inferred_vid',video_tensor_hat[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_vid',video_tensor_true[:16], i + epoch*len(train_loader))
                 fig_inferred = plt.figure()
                 ax1 = fig_inferred.add_subplot(1,1,1)
                 a_mu = a_mu.detach().cpu()
-                obs_seq = obs_seq.detach().cpu()
+                #obs_seq = obs_seq.detach().cpu()
                 #real_pos = sample[1][0,:args.seq_len*2].float()
                 ax1.scatter(a_mu[0,:,0],a_mu[0,:,1])
-                ax1.scatter(obs_seq[0,:,0],obs_seq[0,:,1])
+                #ax1.scatter(obs_seq[0,:,0],obs_seq[0,:,1])
                 #ax1.plot(real_pos[:,0],real_pos[:,1])
-                video_tensor_predict = pred_pos.detach().cpu()
-                video_tensor_predict_true = sample[0][:,args.seq_len:args.seq_len*2].float().detach().cpu()
+                #video_tensor_predict = pred_pos.detach().cpu()
+                #video_tensor_predict_true = sample[0][:,args.seq_len:args.seq_len*2].float().detach().cpu()
                 writer.add_figure('data/inferred_latent_cont_state', fig_inferred, i + epoch*len(train_loader))
-                writer.add_video('data/Predict_vid',video_tensor_predict[:16], i + epoch*len(train_loader))
-                writer.add_video('data/True_Future_vid',video_tensor_predict_true[:16], i + epoch*len(train_loader))
+                #writer.add_video('data/Predict_vid',video_tensor_predict[:16], i + epoch*len(train_loader))
+                #writer.add_video('data/True_Future_vid',video_tensor_predict_true[:16], i + epoch*len(train_loader))
         scheduler.step()
         save_checkpoint({
             'epoch': epoch,
