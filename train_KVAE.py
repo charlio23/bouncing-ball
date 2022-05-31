@@ -74,7 +74,6 @@ def main():
     print(kvae)
     if args.load is not None:
         kvae.load_state_dict(torch.load(args.load)['kvae'])
-        kvae.enable_all_grad()
         print("=> Model loaded successfully")
 
     # Set up optimizers

@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 
 from dataloaders.bouncing_data import BouncingBallDataLoader, MissingBallDataset, SquareBallDataset
 from models.KalmanVAE import KalmanVAE
+from models.VRNN import VRNN
 
 
 parser = argparse.ArgumentParser(description='Image VAE trainer')
@@ -38,7 +39,8 @@ def main():
     print("=> Using device: " + device)
     # Load dataset
     if args.missing:
-        dl = MissingBallDataset(args.train_root)
+        dl = MissingBallDataset(args.train_root,
+                                gt_dir='/data2/users/hbz15/2_body_black_white_real/test')
     elif args.corrupt:
         dl = SquareBallDataset(args.train_root,
                                '/data2/users/hbz15/2_body_black_white_real/mask_test',
@@ -51,7 +53,7 @@ def main():
                         latent_dim=32, num_modes=8, beta=1, 
                         alpha='rnn').double().cuda()
     else:
-        model = None
+        model = VRNN(1, 2, 32, 4, num_rec_layers=3, input_type='visual').float().to(device)
     print(model)
     if args.load is not None:
         model.load_state_dict(torch.load(args.load)[args.model])
@@ -63,11 +65,15 @@ def main():
             b, seq_len, C, H, W = sample[0][:,:args.seq_len].size()
             var = (Variable(sample[0][:,:args.seq_len].double(), requires_grad=False).to(device) > 0.5).double()
             target = sample[2][:,:args.seq_len].double().to(device)
+            if args.model=='vrnn':
+                target = target.float()
+                var = var.float()
             if args.missing:
                 mask = sample[1][:,:args.seq_len].cuda().double()
+                if args.model=='vrnn':
+                    mask = mask.reshape(b,seq_len,1,1,1).float()
                 log_likeli = model.test_log_likeli(var, target=target, mask_frames=mask, L=args.num_samples)
             elif args.corrupt:
-                mask = sample[1][:,:args.seq_len].cuda()
                 log_likeli = model.test_log_likeli(var, target=target, L=args.num_samples)
             log_likelihood_data = torch.cat([log_likelihood_data, log_likeli.detach()])
             if i%10 == 0:

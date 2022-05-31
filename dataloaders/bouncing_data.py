@@ -7,9 +7,16 @@ import cv2
 from glob import glob
 
 class MissingBallDataset(Dataset):
-    def __init__(self, img_dir):
+    def __init__(self, img_dir, gt_dir=None):
         self.img_dir = img_dir
         self.img_labels = self.img_dir
+        self.gt_dir = None
+        if gt_dir is not None:
+            self.gt_dir = gt_dir
+            try:
+                self.gt_filenames = glob(f"{self.gt_dir}/*")
+            except:
+                raise ValueError("gt_dir incorrect")
         try:
             self.img_filenames = glob(f"{self.img_dir}/*")
         except:
@@ -24,7 +31,12 @@ class MissingBallDataset(Dataset):
         img = stored_obj["images"][:,np.newaxis]
         # missing_frames = stored_obj["missing_frames"]
         missing_mask = stored_obj["missing_mask"][:,0,0]
-        return img, missing_mask
+        if self.gt_dir is None:
+            return img, missing_mask
+        else:
+            gt_path = self.gt_filenames[idx]
+            gt_train = np.load(gt_path)["arr_0"][:,np.newaxis,:,:,0]
+            return img, missing_mask, gt_train
 
 class SquareBallDataset(Dataset):
     def __init__(self, img_dir, mask_dir, gt_dir=None):

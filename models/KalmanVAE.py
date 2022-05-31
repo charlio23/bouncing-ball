@@ -369,7 +369,7 @@ class KalmanVAE(nn.Module):
                                         scale_tril=torch.linalg.cholesky(smoothed_cov))       
                 z_sample = smoothed_z.sample()
                 a_pred = torch.matmul(C_t.transpose(0,1), z_sample.unsqueeze(-1)).squeeze(-1).transpose(0,1)
-                a_sample = (1 - mask_frames)*a_pred + mask_frames*a_sample
+                a_sample = (1 - mask_frames.unsqueeze(-1))*a_pred + mask_frames.unsqueeze(-1)*a_sample
                 
             x_hat = self._decode(a_sample.reshape(B*T,-1)).reshape(B,T,C,H,W)
             # ELBO

@@ -152,7 +152,8 @@ class VRNN(nn.Module):
 
     def test_log_likeli(self, x, target=None, mask_frames=None, L=100):
         b, seq_len, *_ = x.size()
-        loglikeli = torch.zeros(b,L).to(x.device)
+        loglikeli = torch.zeros(b).to(x.device)
+        p_x = torch.zeros_like(x)
         for l in range(L):
             h_prev = [torch.zeros((b, self.hidden_dim)).to(x.device) for _ in range(self.num_rec_layers)]
             c_prev = [torch.zeros((b, self.hidden_dim)).to(x.device) for _ in range(self.num_rec_layers)]
@@ -175,7 +176,7 @@ class VRNN(nn.Module):
                 # Collect parameters
                 reconstr_seq[:, i, :] = x_hat
             decoder_x = Bernoulli(reconstr_seq)
-            p_x = (decoder_x.log_prob(target)).reshape(b,-1).sum(-1)
-            loglikeli[:,0] = p_x
-            
+            p_x += (decoder_x.log_prob(target)).exp()
+        loglikeli = ((1/L)*p_x).log().reshape(b,-1).sum(-1)
+
         return loglikeli
