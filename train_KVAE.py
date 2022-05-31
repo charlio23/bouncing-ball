@@ -16,7 +16,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 
-from dataloaders.bouncing_data import BouncingBallDataLoader, MissingBallDataset
+from dataloaders.bouncing_data import BouncingBallDataLoader, MissingBallDataset, SquareBallDataset
 from utils.losses import kld_loss_standard
 from models.KalmanVAE import KalmanVAE
 
@@ -36,7 +36,8 @@ parser.add_argument('--seq_len', default=50, type=int, metavar='N', help='length
 parser.add_argument('--load', action='store', type=str, required=False, help='Path from where to load network.')
 parser.add_argument('--kf_steps', default=1, type=int, metavar='N', help='steps to wait before training alpha network')
 parser.add_argument('--alpha', default='mlp', type=str, help='Alpha network type (mlp|rnn)')
-parser.add_argument('--missing', action='store_true', help='Activate missing data')
+parser.add_argument('--missing', action='store_true', help='Activate missing frames')
+parser.add_argument('--corrupt', action='store_true', help='Activate corrupt data')
 
 def get_device(cuda=True):
     return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
@@ -56,6 +57,9 @@ def main():
     # Load dataset
     if args.missing:
         dl = MissingBallDataset(args.train_root)
+    elif args.corrupt:
+        dl = SquareBallDataset(args.train_root,
+                               '/data2/users/hbz15/2_body_black_white_real/mask_train')
     else:
         dl = BouncingBallDataLoader(args.train_root, images=True)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
@@ -64,9 +68,9 @@ def main():
     variational = not args.determ
     # Load model
 
-    kvae = KalmanVAE(input_dim=1, hidden_dim=128, obs_dim=4, 
-                     latent_dim=16, num_modes=8, beta=args.beta, 
-                     alpha=args.alpha).float().cuda()
+    kvae = KalmanVAE(input_dim=1, hidden_dim=32, obs_dim=4, 
+                     latent_dim=32, num_modes=8, beta=args.beta, 
+                     alpha=args.alpha).double().cuda()
     print(kvae)
     if args.load is not None:
         kvae.load_state_dict(torch.load(args.load)['kvae'])
@@ -91,15 +95,20 @@ def main():
         for i, sample in enumerate(train_loader, 1):
             # Forward sample to network
             b, seq_len, C, H, W = sample[0][:,:args.seq_len].size()
-            var = (Variable(sample[0][:,:args.seq_len].float(), requires_grad=True).to(device) > 0.5).float()
+            var = (Variable(sample[0][:,:args.seq_len].double(), requires_grad=True).to(device) > 0.5).double()
             optimizer.zero_grad()
             #mask = torch.ones(b,seq_len).to(device)
             #mask[:,7:14] = 0
             if args.missing:
+                mask = sample[1][:,:args.seq_len].cuda().double()
+                x_hat, a_mu, _, losses = kvae(var, mask_frames=mask, variational=variational)
+            elif args.corrupt:
                 mask = sample[1][:,:args.seq_len].cuda()
+                x_hat, a_mu, _, losses = kvae(var, mask_visual=mask, variational=variational)
+
             else:
                 mask = None
-            x_hat, a_mu, _, losses = kvae(var, mask, variational=variational)
+                x_hat, a_mu, _, losses = kvae(var, variational=variational)
             # Compute loss and optimize params
             losses['loss'].backward()
             torch.nn.utils.clip_grad_norm_(kvae.parameters(), clip)

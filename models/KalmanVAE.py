@@ -33,14 +33,14 @@ class KalmanVAE(nn.Module):
         self.start_code = nn.Parameter(torch.zeros(self.obs_dim))
         self.state_dyn_net = None
         # Initial p(z_1) distribution
-        self.mu_1 = (torch.zeros(self.latent_dim)).cuda()
-        self.Sigma_1 = (20*torch.eye(self.latent_dim)).cuda()
+        self.mu_1 = (torch.zeros(self.latent_dim)).cuda().double()
+        self.Sigma_1 = (20*torch.eye(self.latent_dim)).cuda().double()
         # Matrix modes
         self.A = nn.Parameter(torch.eye(self.latent_dim).unsqueeze(0).repeat(self.num_modes,1,1))
         self.C = nn.Parameter(torch.randn(self.num_modes, self.obs_dim, self.latent_dim)*0.05)
 
-        self.Q = 0.08*torch.eye(self.latent_dim).cuda()
-        self.R = 0.03*torch.eye(self.obs_dim).cuda()
+        self.Q = 0.08*torch.eye(self.latent_dim).cuda().double()
+        self.R = 0.03*torch.eye(self.obs_dim).cuda().double()
 
 
 
@@ -55,7 +55,7 @@ class KalmanVAE(nn.Module):
     def _encode_obs(self, x, variational=True):
         (z_mu, z_log_var) = self.encoder(x)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
-        z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(x.device))
+        z_std = (z_log_var*0.5).exp()
         sample = z_mu
         if variational:
             sample += z_std*eps
@@ -64,7 +64,7 @@ class KalmanVAE(nn.Module):
 
     def _compute_alpha(self, obs, pred, mask):
         B, *_ = obs.size()
-        joint_obs = (1-mask)*pred + mask*pred
+        joint_obs = (1-mask)*pred + mask*obs
 
         if self.alpha=='mlp':
             dyn_emb = self.parameter_net(joint_obs)
@@ -104,8 +104,8 @@ class KalmanVAE(nn.Module):
         # A: (T, D, D)
         # C: (T, N, D)
         (T, B, _) = obs.size()
-        mu_filt = torch.zeros(T, B, self.latent_dim, 1).to(obs.device)
-        Sigma_filt = torch.zeros(T, B, self.latent_dim, self.latent_dim).to(obs.device)
+        mu_filt = torch.zeros(T, B, self.latent_dim, 1).to(obs.device).double()
+        Sigma_filt = torch.zeros(T, B, self.latent_dim, self.latent_dim).to(obs.device).double()
         obs = obs.unsqueeze(-1)
         mu_t = self.mu_1.expand(B,-1).unsqueeze(-1)
         Sigma_t = self.Sigma_1.expand(B,-1,-1)
@@ -146,17 +146,17 @@ class KalmanVAE(nn.Module):
         # obs: (T ,B, N)
         # mask: (B, T)
         (T, B, _) = obs.size()
-        mu_filt = torch.zeros(T, B, self.latent_dim, 1).to(obs.device)
-        Sigma_filt = torch.zeros(T, B, self.latent_dim, self.latent_dim).to(obs.device)
+        mu_filt = torch.zeros(T, B, self.latent_dim, 1).to(obs.device).double()
+        Sigma_filt = torch.zeros(T, B, self.latent_dim, self.latent_dim).to(obs.device).double()
         obs = obs.unsqueeze(-1)
         mu_t = self.mu_1.expand(B,-1).unsqueeze(-1)
         Sigma_t = self.Sigma_1.expand(B,-1,-1)
 
-        mu_pred = torch.zeros_like(mu_filt)
-        Sigma_pred = torch.zeros_like(Sigma_filt)
+        mu_pred = torch.zeros_like(mu_filt).double()
+        Sigma_pred = torch.zeros_like(Sigma_filt).double()
 
-        A_t = torch.zeros(B,T,self.latent_dim,self.latent_dim).to(obs.device)
-        C_t = torch.zeros(B,T,self.obs_dim,self.latent_dim).to(obs.device)
+        A_t = torch.zeros(B,T,self.latent_dim,self.latent_dim).to(obs.device).double()
+        C_t = torch.zeros(B,T,self.obs_dim,self.latent_dim).to(obs.device).double()
         code = self.start_code.reshape(1,-1).expand(B,-1)
         self.state_dyn_net = None
         alpha = self._compute_alpha(code, code, 
@@ -177,8 +177,9 @@ class KalmanVAE(nn.Module):
             S_t += self.R.unsqueeze(0)
 
             Kalman_gain = torch.matmul(torch.matmul(Sigma_t, torch.transpose(C, 1,2)), torch.inverse(S_t))       
+            Kalman_gain *= mask[:,t].reshape(B,1,1)
             # filter: t | t
-            mu_z = mu_t + torch.matmul(Kalman_gain, r)*mask[:,t].reshape(B,1,1).expand(-1,self.latent_dim,-1)
+            mu_z = mu_t + torch.matmul(Kalman_gain, r)#*mask[:,t].reshape(B,1,1).expand(-1,self.latent_dim,-1)
             
             I_ = torch.eye(self.latent_dim).to(obs.device) - torch.matmul(Kalman_gain, C)
             #Sigma_z = torch.matmul(I_, Sigma_t)
@@ -204,8 +205,8 @@ class KalmanVAE(nn.Module):
         mu_filt, Sigma_filt = filtered
         mu_pred, Sigma_pred = prediction
         (T, *_) = mu_filt.size()
-        mu_z_smooth = torch.zeros_like(mu_filt)
-        Sigma_z_smooth = torch.zeros_like(Sigma_filt)
+        mu_z_smooth = torch.zeros_like(mu_filt).double()
+        Sigma_z_smooth = torch.zeros_like(Sigma_filt).double()
         mu_z_smooth[-1] = mu_filt[-1]
         Sigma_z_smooth[-1] = Sigma_filt[-1]
         for t in reversed(range(T-1)):
@@ -247,11 +248,11 @@ class KalmanVAE(nn.Module):
         return self._decode(eps)
 
     def _compute_elbo(self, x, mask_frames, mask_visual, x_hat, a_mu, a_log_var, a_sample, smoothed, A, C):
-        (B, T, C, H, W) = x.size()
+        (B, T, ch, H, W) = x.size()
         if mask_frames is None:
             mask_frames = torch.ones(B,T).to(x.device)
         if mask_visual is None:
-            mask_visual = torch.ones(B, T, C, H, W)
+            mask_visual = torch.ones(B, T, ch, H, W).to(x.device)
         # max: ELBO = log p(x_t|a_t) - (log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1))
         # min: -ELBO =  - log p(x_t|a_t) + log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1)
         # Fixed variance
@@ -268,7 +269,6 @@ class KalmanVAE(nn.Module):
         decoder_z_0 = MultivariateNormal(self.mu_1, scale_tril=torch.linalg.cholesky(self.Sigma_1))
         decoder_a = MultivariateNormal(torch.zeros(self.obs_dim).to(x.device), scale_tril=torch.linalg.cholesky(self.R))
         q_a = MultivariateNormal(a_mu, torch.diag_embed(torch.exp(a_log_var)))
-
         a_pred, z_next = self._decode_latent(z_sample, A, C)
         # -log p(z_t| z_t-1)
         kld = - decoder_z_0.log_prob(z_sample[0]).mean(dim=0)
@@ -281,7 +281,7 @@ class KalmanVAE(nn.Module):
         kld += (q_a.log_prob(a_sample.transpose(0,1))*mask_frames).mean(dim=0).sum()
         
         elbo = kld + nll
-        loss = self.beta*kld + nll
+        loss = kld + self.beta*nll
         losses = {
             'kld': kld,
             'elbo': elbo,
@@ -348,6 +348,35 @@ class KalmanVAE(nn.Module):
         image_seq = self._decode(obs_seq.reshape(B*seq_len,-1)).reshape(B,seq_len,C,H,W)
 
         return image_seq, obs_seq, latent_seq
+
+    def test_log_likeli(self, x, target=None, mask_frames=None, L=100):
+        # Input is (B,T,C,H,W)
+        # Autoencode
+        (B,T,C,H,W) = x.size()
+        loglikeli = torch.zeros(B,L).to(x.device)
+        for l in range(L):
+            # q(a_t|x_t)
+            a_sample, _, _ = self._encode_obs(x.reshape(B*T,C,H,W))
+            a_sample = a_sample.reshape(B,T,-1)
+
+
+            if mask_frames is not None:
+                # q(z|a)
+                smoothed, _, C_t = self._kalman_posterior(a_sample, mask_frames)
+                smoothed_mean, smoothed_cov = smoothed
+                smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), 
+                                        scale_tril=torch.linalg.cholesky(smoothed_cov))       
+                z_sample = smoothed_z.sample()
+                a_pred = torch.matmul(C_t.transpose(0,1), z_sample.unsqueeze(-1)).squeeze(-1).transpose(0,1)
+                a_sample = (1 - mask_frames)*a_pred + mask_frames*a_sample
+                
+            x_hat = self._decode(a_sample.reshape(B*T,-1)).reshape(B,T,C,H,W)
+            # ELBO
+            decoder_x = Bernoulli(x_hat)
+            p_x = (decoder_x.log_prob(target)).reshape(B,-1).sum(-1)
+            loglikeli[:,l] = p_x.detach()
+        
+        return loglikeli.mean(-1)
 
 if __name__=="__main__":
     # Trial run

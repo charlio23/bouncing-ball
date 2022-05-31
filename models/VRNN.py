@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from models.modules import MLP, CNNEncoder, CNNEncoderPosition, CNNResidualDecoder
+from torch.distributions import Bernoulli
+from models.modules import MLP, CNNFastEncoder, CNNFastDecoder
 
 class VRNN(nn.Module):
     def __init__(self, input_dim, input_pos, hidden_dim, latent_dim, num_rec_layers=1, input_type='base', decoder='LSTM'):
@@ -13,8 +14,10 @@ class VRNN(nn.Module):
         self.prior = MLP(self.hidden_dim, self.hidden_dim, self.latent_dim*2)
         self.input_type = input_type
         if input_type=='visual':
-            self.embedder_x = CNNEncoder(self.input_dim, self.latent_dim, 4, log_var=False)
-            self.decoder = CNNResidualDecoder(self.hidden_dim + self.latent_dim)
+            #self.embedder_x = CNNEncoder(self.input_dim, self.latent_dim, 4, log_var=False)
+            #self.decoder = CNNResidualDecoder(self.hidden_dim + self.latent_dim)
+            self.embedder_x = CNNFastEncoder(self.input_dim, self.latent_dim)
+            self.decoder = CNNFastDecoder(self.hidden_dim + self.latent_dim, self.input_dim)
         else:
             self.embedder_x = MLP(self.input_pos, self.hidden_dim, self.latent_dim)
             self.decoder = MLP(self.hidden_dim + self.latent_dim, self.hidden_dim, self.input_pos)
@@ -45,9 +48,9 @@ class VRNN(nn.Module):
 
     def _inference(self, x, h):
         if self.num_rec_layers == 1:
-            encoder_in = torch.cat([self.embedder_x(x), h], dim=-1)
+            encoder_in = torch.cat([self.embedder_x(x)[0], h], dim=-1)
         else:
-            encoder_in = torch.cat([self.embedder_x(x), h[-1]], dim=-1)
+            encoder_in = torch.cat([self.embedder_x(x)[0], h[-1]], dim=-1)
         (z_mu, z_log_var) = self.encoder(encoder_in).split(self.latent_dim, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
         z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(x.device))
@@ -61,7 +64,7 @@ class VRNN(nn.Module):
         else:
             decoder_in = torch.cat([embed_z, h_prev[-1]], dim=-1)
         x_ = self.decoder(decoder_in)
-        input = torch.cat([self.embedder_x(x_), embed_z], dim=-1)
+        input = torch.cat([self.embedder_x(x_)[0], embed_z], dim=-1)
         if self.num_rec_layers == 1:
             h_prev, c_prev = self.hidden_decoder(input, (h_prev, c_prev))
         else:
@@ -112,7 +115,7 @@ class VRNN(nn.Module):
 
         return reconstr_seq
         
-    def forward(self, x):
+    def forward(self, x, mask_frames=None):
         b, seq_len, *_ = x.size()
         h_prev = [torch.zeros((b, self.hidden_dim)).to(x.device) for _ in range(self.num_rec_layers)]
         c_prev = [torch.zeros((b, self.hidden_dim)).to(x.device) for _ in range(self.num_rec_layers)]
@@ -124,8 +127,12 @@ class VRNN(nn.Module):
         z_params = torch.zeros(sizes_z_params).to(x.device)
         z_params_prior = torch.zeros(sizes_z_params).to(x.device)
         for i in range(seq_len):
-
-            last_x = x[:,i,:]
+            if mask_frames is not None:
+                z_sampled = self._sample(h_prev)
+                pos_hat, _, _ = self._decode(z_sampled, h_prev, c_prev)
+                last_x = x[:,i,:]*mask_frames[:,i] + pos_hat*(1 - mask_frames[:,i])
+            else:
+                last_x = x[:,i,:]
             # Autoencode
             z, z_mu, z_log_var = self._inference(last_x, h_prev)
             if self.num_rec_layers == 1:
@@ -142,3 +149,33 @@ class VRNN(nn.Module):
             z_params_prior[:, i, 1, :] = z_log_var_prior
 
         return reconstr_seq, z_params, z_params_prior
+
+    def test_log_likeli(self, x, target=None, mask_frames=None, L=100):
+        b, seq_len, *_ = x.size()
+        loglikeli = torch.zeros(b,L).to(x.device)
+        for l in range(L):
+            h_prev = [torch.zeros((b, self.hidden_dim)).to(x.device) for _ in range(self.num_rec_layers)]
+            c_prev = [torch.zeros((b, self.hidden_dim)).to(x.device) for _ in range(self.num_rec_layers)]
+            if self.num_rec_layers == 1:
+                h_prev = h_prev[0]
+                c_prev = c_prev[0]
+            reconstr_seq = torch.zeros_like(x).to(x.device)
+
+            for i in range(seq_len):
+                if mask_frames is not None:
+                    z_sampled = self._sample(h_prev)
+                    pos_hat, _, _ = self._decode(z_sampled, h_prev, c_prev)
+                    last_x = x[:,i,:]*mask_frames[:,i] + pos_hat*(1 - mask_frames[:,i])
+                else:
+                    last_x = x[:,i,:]
+                # Autoencode
+                z, _, _ = self._inference(last_x, h_prev)
+                x_hat, h_prev, c_prev = self._decode(z, h_prev, c_prev)
+
+                # Collect parameters
+                reconstr_seq[:, i, :] = x_hat
+            decoder_x = Bernoulli(reconstr_seq)
+            p_x = (decoder_x.log_prob(target)).reshape(b,-1).sum(-1)
+            loglikeli[:,0] = p_x
+            
+        return loglikeli
