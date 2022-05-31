@@ -353,7 +353,8 @@ class KalmanVAE(nn.Module):
         # Input is (B,T,C,H,W)
         # Autoencode
         (B,T,C,H,W) = x.size()
-        loglikeli = torch.zeros(B,L).to(x.device)
+        loglikeli = torch.zeros(B).to(x.device)
+        p_x = torch.zeros_like(x)
         for l in range(L):
             # q(a_t|x_t)
             a_sample, _, _ = self._encode_obs(x.reshape(B*T,C,H,W))
@@ -373,10 +374,10 @@ class KalmanVAE(nn.Module):
             x_hat = self._decode(a_sample.reshape(B*T,-1)).reshape(B,T,C,H,W)
             # ELBO
             decoder_x = Bernoulli(x_hat)
-            p_x = (decoder_x.log_prob(target)).reshape(B,-1).sum(-1)
-            loglikeli[:,l] = p_x.detach()
+            p_x += (decoder_x.log_prob(target)).exp()
+        loglikeli = ((1/L)*p_x).log().reshape(B,-1).sum(-1)
         
-        return loglikeli.mean(-1)
+        return loglikeli
 
 if __name__=="__main__":
     # Trial run
