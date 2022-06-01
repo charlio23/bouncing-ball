@@ -40,11 +40,11 @@ def main():
     # Load dataset
     if args.missing:
         dl = MissingBallDataset(args.train_root,
-                                gt_dir='/data2/users/hbz15/2_body_black_white_real/test')
+                                gt_dir='/data2/users/hbz15/hmnist/test')
     elif args.corrupt:
         dl = SquareBallDataset(args.train_root,
-                               '/data2/users/hbz15/2_body_black_white_real/mask_test',
-                               gt_dir='/data2/users/hbz15/2_body_black_white_real/test')
+                               '/data2/users/hbz15/hmnist/mask_test',
+                               gt_dir='/data2/users/hbz15/hmnist/test')
     else:
         dl = BouncingBallDataLoader(args.train_root, images=True)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)

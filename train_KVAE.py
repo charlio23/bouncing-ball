@@ -59,11 +59,11 @@ def main():
         dl = MissingBallDataset(args.train_root)
     elif args.corrupt:
         dl = SquareBallDataset(args.train_root,
-                               '/data2/users/hbz15/2_body_black_white_real/mask_train')
+                               '/data2/users/hbz15/hmnist/mask_train')
     else:
         dl = BouncingBallDataLoader(args.train_root, images=True)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
-    sample = next(iter(train_loader))[0].float()
+    sample = next(iter(train_loader))[0].double()
     _, _, input_dim, *_ = sample.size()
     variational = not args.determ
     # Load model
@@ -118,7 +118,7 @@ def main():
             batch_time = time.time() - end
             end = time.time()
             video_tensor_hat = x_hat.reshape((b, seq_len, C, H, W)).detach().cpu()
-            video_tensor_true = sample[0][:,:args.seq_len].float().detach().cpu()
+            video_tensor_true = sample[0][:,:args.seq_len].double().detach().cpu()
             if i % 10 == 0:
                 print('Epoch: [{0}][{1}/{2}]\t'
                     'Time {batch_time:.3f}\t'
@@ -131,7 +131,7 @@ def main():
                 writer.add_scalar('data/loss', losses['loss'], i + epoch*len(train_loader))
             #with torch.no_grad():
                     #pred_pos, obs_seq, _ = kvae.predict_sequence(var, seq_len=args.seq_len)
-                    #target = sample[0][:,args.seq_len:args.seq_len*2].float().to(pred_pos.device)
+                    #target = sample[0][:,args.seq_len:args.seq_len*2].double().to(pred_pos.device)
                     #pred_mse = F.mse_loss(pred_pos, target, reduction='sum')/(args.batch_size)
                     #writer.add_scalar('data/prediction_loss', pred_mse, i + epoch*len(train_loader))
             if i % 100 == 0:
@@ -141,12 +141,12 @@ def main():
                 ax1 = fig_inferred.add_subplot(1,1,1)
                 a_mu = a_mu.detach().cpu()
                 #obs_seq = obs_seq.detach().cpu()
-                #real_pos = sample[1][0,:args.seq_len*2].float()
+                #real_pos = sample[1][0,:args.seq_len*2].double()
                 ax1.scatter(a_mu[0,:,0],a_mu[0,:,1])
                 #ax1.scatter(obs_seq[0,:,0],obs_seq[0,:,1])
                 #ax1.plot(real_pos[:,0],real_pos[:,1])
                 #video_tensor_predict = pred_pos.detach().cpu()
-                #video_tensor_predict_true = sample[0][:,args.seq_len:args.seq_len*2].float().detach().cpu()
+                #video_tensor_predict_true = sample[0][:,args.seq_len:args.seq_len*2].double().detach().cpu()
                 writer.add_figure('data/inferred_latent_cont_state', fig_inferred, i + epoch*len(train_loader))
                 #writer.add_video('data/Predict_vid',video_tensor_predict[:16], i + epoch*len(train_loader))
                 #writer.add_video('data/True_Future_vid',video_tensor_predict_true[:16], i + epoch*len(train_loader))
