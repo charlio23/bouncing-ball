@@ -43,17 +43,17 @@ def main():
                                 gt_dir='/data2/users/hbz15/hmnist/test')
     elif args.corrupt:
         dl = SquareBallDataset(args.train_root,
-                               '/data2/users/hbz15/hmnist/mask_test',
-                               gt_dir='/data2/users/hbz15/hmnist/test')
+                               '/data2/users/hbz15/2_body_black_white_real_real/mask_test',
+                               gt_dir='/data2/users/hbz15/2_body_black_white_real_real/test')
     else:
         dl = BouncingBallDataLoader(args.train_root, images=True)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
     if args.model == 'kvae':
-        model = KalmanVAE(input_dim=1, hidden_dim=32, obs_dim=4, 
+        model = KalmanVAE(input_dim=1, hidden_dim=32, obs_dim=16, 
                         latent_dim=32, num_modes=8, beta=1, 
                         alpha='rnn').double().cuda()
     else:
-        model = VRNN(1, 2, 32, 4, num_rec_layers=3, input_type='visual').float().to(device)
+        model = VRNN(1, 2, 32, 16, num_rec_layers=3, input_type='visual').float().to(device)
     print(model)
     if args.load is not None:
         model.load_state_dict(torch.load(args.load)[args.model])

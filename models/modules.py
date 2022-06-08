@@ -26,6 +26,49 @@ class MLP(nn.Module):
         x = self.fc_final(x)
         return x
 
+class MLPJacobian(nn.Module):
+    def __init__(self, n_in, n_hid, n_out):
+        super(MLPJacobian, self).__init__()
+        self.n_in = n_in
+        self.n_hid = n_hid
+        self.n_out = n_out
+        self.fc1 = nn.Linear(n_in, n_hid)
+        self.fc2 = nn.Linear(n_hid, n_hid)
+        self.fc_final = nn.Linear(n_hid, n_out)
+
+        self._init_weights()
+
+    def _soft_plus_der(self, x):
+        return (torch.exp(x)/(1 + torch.exp(x)))
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight.data)
+                m.bias.data.fill_(0.1)
+
+    def forward(self, inputs):
+        # Input shape: [num_sims, num_things, num_features]
+        x = F.softplus(self.fc1(inputs))
+        x = F.softplus(self.fc2(x))
+        x = self.fc_final(x)
+        return x
+
+    def jacobian(self, inputs):
+        # Input shape: [num_sims, num_things, num_features]
+        B, _ = inputs.size()
+        z_1 = self.fc1(inputs)
+        a_1 = F.softplus(z_1)
+        z_2 = self.fc2(a_1)
+        a_2 = F.softplus(z_2)
+        out = self.fc_final(a_2)
+
+        d_2 = self.fc_final.weight.unsqueeze(0).repeat(B,1,1)*self._soft_plus_der(z_2).unsqueeze(1).repeat(1,self.n_out,1)
+        d_1 = torch.matmul(d_2, self.fc2.weight.unsqueeze(0).repeat(B,1,1))*self._soft_plus_der(z_1).unsqueeze(1).repeat(1,self.n_out,1)
+        jacobi = torch.matmul(d_1, self.fc1.weight.unsqueeze(0).repeat(B,1,1))
+
+        return out, jacobi
+
 class SequentialEncoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_discr, output_cont, num_layers=4, bidirectional=True, output_type='many'):
         super(SequentialEncoder, self).__init__()

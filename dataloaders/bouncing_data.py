@@ -71,7 +71,7 @@ class SquareBallDataset(Dataset):
             return img, mask_train
         else:
             gt_path = self.gt_filenames[idx]
-            gt_train = np.load(gt_path)["images"][:,np.newaxis,:,:,0]
+            gt_train = np.load(gt_path)["arr_0"][:,np.newaxis,:,:,0]
             return img, mask_train, gt_train
 
 class BouncingBallDataLoader(Dataset):
