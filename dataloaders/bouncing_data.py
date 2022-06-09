@@ -93,9 +93,9 @@ class BouncingBallDataLoader(Dataset):
             self.root_dir, self.file_list[i]))
         im = sample['arr_0']
         if len(im.shape) == 3:
-            im = im[:,np.newaxis,:,:].astype(float)/255.0
+            im = im[:,np.newaxis,:,:]
         else:
-            im = im.transpose((0,3,1,2))/255.0
+            im = im.transpose((0,3,1,2))
         return im
 
 def visualize_rollout(rollout, interval=50, show_step=False, save=False):
