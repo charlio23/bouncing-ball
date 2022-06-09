@@ -91,15 +91,12 @@ class BouncingBallDataLoader(Dataset):
     def __getitem__(self, i):
         sample = np.load(os.path.join(
             self.root_dir, self.file_list[i]))
-        pos = sample['positions']
-        pos = pos[:,:2]/128.0 - 1.0
-        im = sample['images']
+        im = sample['arr_0']
         if len(im.shape) == 3:
             im = im[:,np.newaxis,:,:].astype(float)/255.0
         else:
             im = im.transpose((0,3,1,2))/255.0
-        return im, pos
-
+        return im
 
 def visualize_rollout(rollout, interval=50, show_step=False, save=False):
     """Visualization for a single sample rollout of a physical system.

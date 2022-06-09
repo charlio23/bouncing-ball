@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, Normal, Bernoulli
 
-from modules import CNNFastDecoder, CNNFastEncoder, MLPJacobian
+from models.modules import CNNFastDecoder, CNNFastEncoder, MLPJacobian
 
 class ExtendedKalmanVAE(nn.Module):
     def __init__(self, input_dim, hidden_dim, obs_dim, latent_dim, beta=1):
@@ -110,6 +110,8 @@ class ExtendedKalmanVAE(nn.Module):
     def _kalman_posterior(self, obs, filter_only=False):
         # obs: (B ,T, N)
         filtered, pred, A = self._filter_posterior(obs.transpose(0,1))
+        if filter_only:
+            return filtered
         smoothed = self._smooth_posterior(A, filtered, pred)
         
         return smoothed
@@ -190,10 +192,9 @@ class ExtendedKalmanVAE(nn.Module):
             seq_len = T
         a_sample, _, _ = self._encode_obs(input.reshape(B*T,C,H,W))
         a_sample = a_sample.reshape(B,T,-1)
-        filt, A_t, C_t = self._kalman_posterior(a_sample, filter_only=True)
+        filt = self._kalman_posterior(a_sample, filter_only=True)
         filt_mean, filt_cov = filt
-        eps = 1e-6*torch.eye(self.latent_dim).to(input.device).reshape(1,self.latent_dim,self.latent_dim).repeat(B, 1, 1)
-        filt_z = MultivariateNormal(filt_mean[-1].squeeze(-1), scale_tril=torch.linalg.cholesky(filt_cov[-1] + eps))
+        filt_z = MultivariateNormal(filt_mean[-1].squeeze(-1), scale_tril=torch.linalg.cholesky(filt_cov[-1]))
         z_sample = filt_z.sample()
         _shape = [a_sample.size(i) if i!=1 else seq_len for i in range(len(a_sample.size()))]
         obs_seq = torch.zeros(_shape).to(input.device)
@@ -202,24 +203,12 @@ class ExtendedKalmanVAE(nn.Module):
         latent_prev = z_sample
         obs_prev = a_sample[:,-1]
         for t in range(seq_len):
-            # Compute alpha from a_0:t-1
-            if self.alpha=='mlp':
-                dyn_emb = self.parameter_net(obs_prev)
-            else:
-                alpha_, cell_state = self.state_dyn_net
-                dyn_emb, self.state_dyn_net = self.parameter_net(obs_prev.unsqueeze(1), (alpha_, cell_state))
-                dyn_emb = self.alpha_out(dyn_emb)
-            inter_weight = dyn_emb.softmax(-1).squeeze(1)
-            ## Compute A_t, C_t
-            A_t = torch.matmul(inter_weight, self.A.reshape(self.num_modes,-1)).reshape(B,self.latent_dim,self.latent_dim)
-            C_t = torch.matmul(inter_weight, self.C.reshape(self.num_modes,-1)).reshape(B,self.obs_dim,self.latent_dim)
-
             # Calculate new z_t
             ## Update z_t
-            latent_prev = torch.matmul(A_t, latent_prev.unsqueeze(-1)).squeeze(-1)
+            latent_prev = self.transition(latent_prev)
             latent_seq[:,t] = latent_prev
             # Calculate new a_t
-            obs_prev = torch.matmul(C_t, latent_prev.unsqueeze(-1)).squeeze(-1)
+            obs_prev = self.emission(latent_prev)
             obs_seq[:,t] = obs_prev
 
         image_seq = self._decode(obs_seq.reshape(B*seq_len,-1)).reshape(B,seq_len,C,H,W)
