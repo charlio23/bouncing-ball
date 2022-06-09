@@ -48,14 +48,13 @@ class MLPJacobian(nn.Module):
                 m.bias.data.fill_(0.1)
 
     def forward(self, inputs):
-        # Input shape: [num_sims, num_things, num_features]
+        
         x = F.softplus(self.fc1(inputs))
         x = F.softplus(self.fc2(x))
         x = self.fc_final(x)
         return x
 
     def jacobian(self, inputs):
-        # Input shape: [num_sims, num_things, num_features]
         B, _ = inputs.size()
         z_1 = self.fc1(inputs)
         a_1 = F.softplus(z_1)
