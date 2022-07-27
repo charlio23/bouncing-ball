@@ -6,8 +6,8 @@ from utils.sampling import gumbel_softmax, my_softmax
 from utils.losses import kl_categorical, kl_categorical_uniform, kld_loss, kld_loss_standard, nll_gaussian, nll_gaussian_var_fixed
 
 class VRSLDS(nn.Module):
-    def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=0.5, 
-                 bidirectional=True, beta=1, SB=False, posterior='first-order',
+    def __init__(self, obs_dim, discr_dim, cont_dim, hidden_dim, num_rec_layers, tau=1, 
+                 bidirectional=True, beta=1, SB=False, posterior='first-order', nonlinear=False,
                  full_montecarlo=False):
         super(VRSLDS, self).__init__()
         self.obs_dim = obs_dim
@@ -21,6 +21,8 @@ class VRSLDS(nn.Module):
         self.SB = SB
         # Posterior factorised|first-order|recurrent|hierarchical
         self.posterior = posterior
+        # Make transitions nonlinear
+        self.nonlinear = nonlinear
         self.full_montecarlo = full_montecarlo
 
         # Network parameters
@@ -42,23 +44,22 @@ class VRSLDS(nn.Module):
             self.out_cont_mean = MLP(hidden_dim*dim_multiplier, hidden_dim, cont_dim)
             self.out_cont_log_var = MLP(hidden_dim*dim_multiplier, hidden_dim, cont_dim)
 
-        self.C = nn.ModuleList([
-            nn.Linear(cont_dim, obs_dim) for i in range(self.discr_dim)
-        ])
+        #self.C = nn.ModuleList([
+        #    nn.Linear(cont_dim, obs_dim) for i in range(self.discr_dim)
+        #])
+        self.C = nn.Linear(cont_dim, obs_dim)
         self.A = nn.ModuleList([
             nn.Linear(cont_dim, cont_dim) for i in range(self.discr_dim)
         ])
-        self.R = nn.ModuleList([
-            nn.Linear(cont_dim, (discr_dim-1) if SB else discr_dim) for i in range(self.discr_dim)
-        ])
-        self._init_weights()
-
-    def _init_weights(self):
-        for i in range(self.discr_dim):
-            self.R[i].weight.data.fill_(1e-5)
-            self.R[i].bias.data.fill_(1/self.discr_dim)
-
-            self.A[i].weight.data.fill_(0)
+        if self.nonlinear:
+            self.SB = False
+            self.R = nn.ModuleList([
+                MLP(cont_dim, hidden_dim, discr_dim) for i in range(self.discr_dim)
+            ])        
+        else:
+            self.R = nn.ModuleList([
+                nn.Linear(cont_dim, (discr_dim-1) if SB else discr_dim) for i in range(self.discr_dim)
+            ])
 
     def _inference(self, x):
         x = self.encoder(x)
@@ -154,26 +155,30 @@ class VRSLDS(nn.Module):
             x_log_var = torch.zeros_like(x_sample)
             z_next = torch.zeros(B,self.discr_dim).to(x.device)
             x_next = torch.zeros(B,self.cont_dim).to(x.device)
+            z_samp_i = torch.zeros(B,self.discr_dim).to(x.device)
+            x_samp_i = torch.zeros(B,self.cont_dim).to(x.device)
 
             for t in range(T):
 
-                z_distrib_i = z_next + z_smooth
+                z_distrib_i = z_next + z_smooth[:,t,:]
                 z_distrib[:,t,:] = z_distrib_i
 
                 z_samp_i = self._sample_discrete_states(z_distrib_i)
                 z_sample[:,t,:] = z_samp_i
 
-                x_mean_i = x_next + x_mean_smooth
-                x_log_var_i = 1e-4 + x_log_var_smooth
+
+                x_next = self._decode_latent_x(z_samp_i, x_samp_i)
+
+                x_mean_i = x_next + x_mean_smooth[:,t,:]
+                x_log_var_i = 1e-4 + x_log_var_smooth[:,t,:]
                 x_mean[:,t,:] = x_mean_i
                 x_log_var[:,t,:] = x_log_var_i
 
                 x_samp_i = self._sample_cont_states(x_mean_i, x_log_var_i)
                 x_sample[:,t,:] = x_samp_i
 
-                _, z_next, x_next = self._decode(z_samp_i.unsqueeze(1), x_samp_i.unsqueeze(1))
-                z_next.unsqueeze_(1)
-                x_next.unsqueeze_(1)
+                z_next = self._decode_latent_z(z_samp_i, x_samp_i)
+
 
         return z_distrib, x_mean, x_log_var, z_sample, x_sample
 
@@ -185,16 +190,38 @@ class VRSLDS(nn.Module):
             [torch.ones(B, T, 1).to(prob_vector.device), (1 - torch.sigmoid(prob_vector)).cumprod(dim=-1)], dim=-1)
         prob_SB = sigmoid_vector*SB_cummulant
         return prob_SB
+    
+    def _decode_latent_x(self, z_sample, x_sample):
+        x_next = torch.zeros(x_sample.size(0), self.cont_dim).to(x_sample.device)
+        for i in range(self.discr_dim):
+            # x_t+1 | x_t, z_t+1
+            x_next += self.A[i](x_sample)*z_sample[:,i:i+1]
 
+        return x_next
+
+    def _decode_latent_z(self, z_sample, x_sample):
+        z_next = torch.zeros(x_sample.size(0),
+            (self.discr_dim-1) if self.SB else self.discr_dim).to(x_sample.device)
+        for i in range(self.discr_dim):
+            # z_t+1 | x_t, z_t
+            z_next += self.R[i](x_sample)*z_sample[:,i:i+1]
+        if self.SB:
+            z_next = self._compute_SB_prob(z_next.unsqueeze(1)).squeeze(1)
+        else:
+            z_next = z_next.softmax(-1)
+
+        return z_next
+
+    def _decode_y(self, x_sample):
+        # y_t | x_t
+        y = self.C(x_sample)
+        return y
 
     def _decode(self, z_sample, x_sample):
-        y_pred = torch.zeros(x_sample.size(0), x_sample.size(1), self.obs_dim).to(x_sample.device)
         x_next = torch.zeros(x_sample.size(0), x_sample.size(1)-1, self.cont_dim).to(x_sample.device)
         z_next = torch.zeros(x_sample.size(0), x_sample.size(1)-1, 
             (self.discr_dim-1) if self.SB else self.discr_dim).to(x_sample.device)
         for i in range(self.discr_dim):
-            # y_t | x_t, z_t
-            y_pred += self.C[i](x_sample)*z_sample[:,:,i:i+1]
             # x_t+1 | x_t, z_t+1
             x_next += self.A[i](x_sample[:,:-1,:])*z_sample[:,1:,i:i+1]
             # z_t+1 | x_t, z_t
@@ -203,6 +230,8 @@ class VRSLDS(nn.Module):
             z_next = self._compute_SB_prob(z_next)
         else:
             z_next = z_next.softmax(-1)
+        # y_t | x_t, z_t
+        y_pred = self.C(x_sample)
 
         return y_pred, z_next, x_next
     
@@ -246,6 +275,28 @@ class VRSLDS(nn.Module):
 
         return y_pred, x_sample, z_sample, losses
 
+    def sample_predict(self, input, pred_len):
+        # Autoencode + predition
+        # Input (B, T, obs_dim)
+        # Inference
+        y_pred, x_sample, z_sample, losses = self.forward(input)
+        # Predict sequence
+        z_pred_seq = torch.zeros(x_sample.size(0), pred_len, self.discr_dim).to(x_sample.device)
+        x_pred_seq = torch.zeros(x_sample.size(0), pred_len, self.cont_dim).to(x_sample.device)
+        z_samp_i = z_sample[:,-1,:]
+        x_samp_i = x_sample[:,-1,:]
+        for t in range(pred_len):
+                # z_t+1 | x_t, z_t
+                z_next = self._decode_latent_z(z_samp_i, x_samp_i)
+                # x_t+1 | x_t, z_t+1
+                x_next = self._decode_latent_x(z_next, x_samp_i)
+
+                z_samp_i = z_next
+                x_samp_i = x_next
+                z_pred_seq[:,t,:] = z_samp_i
+                x_pred_seq[:,t,:] = x_samp_i
+        y_pred_seq = self._decode_y(x_pred_seq)
+        return (y_pred, x_sample, z_sample, losses), (y_pred_seq, x_pred_seq, z_pred_seq)
 
 if __name__=="__main__":
     # Trial run

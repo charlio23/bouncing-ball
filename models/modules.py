@@ -26,6 +26,48 @@ class MLP(nn.Module):
         x = self.fc_final(x)
         return x
 
+class MLPJacobian(nn.Module):
+    def __init__(self, n_in, n_hid, n_out):
+        super(MLPJacobian, self).__init__()
+        self.n_in = n_in
+        self.n_hid = n_hid
+        self.n_out = n_out
+        self.fc1 = nn.Linear(n_in, n_hid)
+        self.fc2 = nn.Linear(n_hid, n_hid)
+        self.fc_final = nn.Linear(n_hid, n_out)
+
+        self._init_weights()
+
+    def _soft_plus_der(self, x):
+        return (torch.exp(x)/(1 + torch.exp(x)))
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight.data)
+                m.bias.data.fill_(0.1)
+
+    def forward(self, inputs):
+        
+        x = F.softplus(self.fc1(inputs))
+        x = F.softplus(self.fc2(x))
+        x = self.fc_final(x)
+        return x
+
+    def jacobian(self, inputs):
+        B, _ = inputs.size()
+        z_1 = self.fc1(inputs)
+        a_1 = F.softplus(z_1)
+        z_2 = self.fc2(a_1)
+        a_2 = F.softplus(z_2)
+        out = self.fc_final(a_2)
+
+        d_2 = self.fc_final.weight.unsqueeze(0).repeat(B,1,1)*self._soft_plus_der(z_2).unsqueeze(1).repeat(1,self.n_out,1)
+        d_1 = torch.matmul(d_2, self.fc2.weight.unsqueeze(0).repeat(B,1,1))*self._soft_plus_der(z_1).unsqueeze(1).repeat(1,self.n_out,1)
+        jacobi = torch.matmul(d_1, self.fc1.weight.unsqueeze(0).repeat(B,1,1))
+
+        return out, jacobi
+
 class SequentialEncoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_discr, output_cont, num_layers=4, bidirectional=True, output_type='many'):
         super(SequentialEncoder, self).__init__()
@@ -48,19 +90,19 @@ class ResidualBlock(nn.Module):
     def __init__(self, input_channels):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=input_channels,
-                                out_channels=64,
+                                out_channels=32,
                                 kernel_size=3,
                                 stride=1,
                                 padding=1)
-        self.conv2 = nn.Conv2d(in_channels=64,
-                                out_channels=64,
+        self.conv2 = nn.Conv2d(in_channels=32,
+                                out_channels=32,
                                 kernel_size=3,
                                 stride=1,
                                 padding=1)
         self.input_channels = input_channels
-        if input_channels != 64:
+        if input_channels != 32:
             self.match_conv = nn.Conv2d(in_channels=input_channels,
-                        out_channels=64,
+                        out_channels=32,
                         kernel_size=1,
                         stride=1,
                         padding=0)
@@ -68,23 +110,23 @@ class ResidualBlock(nn.Module):
 
     def forward(self, x):
         x = F.upsample_bilinear(x, scale_factor=2)
-        res = self.match_conv(x) if self.input_channels!=64 else x
+        res = self.match_conv(x) if self.input_channels!=32 else x
         x = F.relu(self.conv1(x))
         x = self.conv2(x)
         return x + res
 
 
 class CNNResidualDecoder(nn.Module):
-    def __init__(self, latent_dim):
+    def __init__(self, latent_dim, out_dim=3):
         super(CNNResidualDecoder, self).__init__()
         self.latent_dim = latent_dim
-        self.first_mlp = MLP(latent_dim, latent_dim, latent_dim*4*4)
+        self.first_mlp = MLP(latent_dim, latent_dim*4, latent_dim*4*4)
         self.first_block = ResidualBlock(input_channels=latent_dim)
         self.residual_blocks = nn.ModuleList([
-            ResidualBlock(input_channels=64)
+            ResidualBlock(input_channels=32)
         for i in range(2)])
-        self.out_conv = nn.Conv2d(in_channels=64,
-                                  out_channels=3,
+        self.out_conv = nn.Conv2d(in_channels=32,
+                                  out_channels=out_dim,
                                   kernel_size=3,
                                   stride=1,
                                   padding=1)
@@ -97,6 +139,95 @@ class CNNResidualDecoder(nn.Module):
             x = residual_layer(x)
         x = torch.sigmoid(self.out_conv(x))
         return x
+
+class CNNFastDecoderKVAE(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(CNNFastDecoder, self).__init__()
+        self.in_dec = nn.Linear(input_dim, 32*4*4)
+        self.hidden_convs = nn.ModuleList([
+            nn.Conv2d(in_channels=32,
+                      out_channels=32*4,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1)
+        for _ in range(3)])
+        self.out_conv = nn.Conv2d(in_channels=32,
+                      out_channels=output_dim,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1)
+
+    def forward(self, x):
+        b, *_ = x.size()
+        x = self.in_dec(x).reshape((b, -1, 4, 4))
+        for hidden_conv in self.hidden_convs:
+            x = F.relu(hidden_conv(x))
+            x = subpixel_reshape(x, 2)
+
+        x = torch.sigmoid(self.out_conv(x))
+        return x
+
+class CNNFastDecoder(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(CNNFastDecoder, self).__init__()
+        self.in_dec = nn.Linear(input_dim, 32*8*8)
+        self.hidden_convs = nn.ModuleList([
+            nn.ConvTranspose2d(in_channels=32,
+                      out_channels=64,
+                      kernel_size=3,
+                      stride=2,
+                      padding=1),
+            nn.ConvTranspose2d(in_channels=64,
+                      out_channels=32,
+                      kernel_size=3,
+                      stride=2,
+                      padding=1)])
+        self.out_conv = nn.Conv2d(in_channels=32,
+                      out_channels=output_dim,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1)
+
+    def forward(self, x):
+        b, *_ = x.size()
+        x = self.in_dec(x).reshape((b, -1, 8, 8))
+        for hidden_conv in self.hidden_convs:
+            x = F.relu(hidden_conv(x))
+            x = F.pad(x, (0,1,0,1))
+
+        x = torch.sigmoid(self.out_conv(x))
+        return x
+
+class CNNFastEncoder(nn.Module):
+    def __init__(self, input_channels, output_dim, log_var=True):
+        super(CNNFastEncoder, self).__init__()
+        self.in_conv = nn.Conv2d(in_channels=input_channels,
+                                 out_channels=32,
+                                 kernel_size=3,
+                                 stride=2,
+                                 padding=1)
+        self.hidden_conv = nn.ModuleList([
+            nn.Conv2d(in_channels=32,
+                      out_channels=32,
+                      kernel_size=3,
+                      stride=2,
+                      padding=1)
+        for _ in range(1)])
+
+        self.out_mean = nn.Linear(32*8*8, output_dim)
+        if log_var:
+            self.out_log_var = nn.Linear(32*8*8, output_dim)
+        else:
+            self.out_log_var = None
+    def forward(self, x):
+        x = F.relu(self.in_conv(x))
+        for hidden_layer in self.hidden_conv:
+            x = F.relu(hidden_layer(x))
+        x = x.flatten(-3, -1)
+        if self.out_log_var is None:
+            return self.out_mean(x)
+        mean, log_var = self.out_mean(x), self.out_log_var(x)
+        return mean, log_var
 
 class CNNEncoder(nn.Module):
     def __init__(self, input_channels, output_dim, num_layers, log_var=True):
@@ -167,3 +298,35 @@ class CNNEncoderPosition(nn.Module):
         x = torch.cat([pos, x], dim=1)
         mean = self.out_mean(x)
         return mean
+
+def subpixel_reshape(x, factor):
+    """
+    Subpixel reshape.
+    code adapted from https://github.com/simonkamronn/kvae/blob/849d631dbf2faf2c293d56a0d7a2e8564e294a51/kvae/utils/nn.py
+    
+    Reshape function for subpixel upsampling
+    x: tensorflow tensor, shape = (bs, c, h, w)
+    factor: interger, upsample factor
+    Return: tensorflow tensor, shape = (bs, c//factor**2, h*factor,w*factor)
+    """
+
+    # input and output shapes
+    B, C, H, W = x.size()
+    out_H, out_W, out_C = H * factor, W * factor, C // factor ** 2
+
+    assert C % factor == 0, "Number of input channels must be divisible by factor"
+
+    intermediateshp = (-1, out_C, factor, factor, H, W)
+    x = torch.reshape(x, intermediateshp)
+    x = torch.permute(x, (0, 1, 4, 2, 5, 3))
+    #                     B, C, H, F, W, F 
+
+    x = torch.reshape(x, (-1, out_C, out_H, out_W))
+
+    return x
+
+if __name__=="__main__":
+    net = CNNFastEncoder(3, 2)
+    x = torch.randn((2,3,32,32))
+
+    print(net(x)[0].size())
