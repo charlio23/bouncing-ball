@@ -11,7 +11,7 @@ def nll_gaussian(mu_x, log_var, target):
     var_term = 0.5 * dim * (np.log((2 * np.pi)) + log_var.sum(dim=-1))
     return (neg_log_p.sum() + var_term.sum())/ (target.size(0))
 
-def nll_gaussian_var_fixed(preds, target, variance, add_const=True):
+def nll_gaussian_var_fixed(preds, target, variance, add_const=False):
     """Based on https://github.com/ethanfetaya/NRI (MIT License)."""
     neg_log_p = (preds - target) ** 2 / (2 * variance)
     if add_const:

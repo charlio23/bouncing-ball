@@ -48,9 +48,9 @@ class VRNN(nn.Module):
 
     def _inference(self, x, h):
         if self.num_rec_layers == 1:
-            encoder_in = torch.cat([self.embedder_x(x)[0], h], dim=-1)
+            encoder_in = torch.cat([self.embedder_x(x), h], dim=-1)
         else:
-            encoder_in = torch.cat([self.embedder_x(x)[0], h[-1]], dim=-1)
+            encoder_in = torch.cat([self.embedder_x(x), h[-1]], dim=-1)
         (z_mu, z_log_var) = self.encoder(encoder_in).split(self.latent_dim, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
         z_std = torch.minimum((z_log_var*0.5).exp(), torch.FloatTensor([100.]).to(x.device))
@@ -64,7 +64,7 @@ class VRNN(nn.Module):
         else:
             decoder_in = torch.cat([embed_z, h_prev[-1]], dim=-1)
         x_ = self.decoder(decoder_in)
-        input = torch.cat([self.embedder_x(x_)[0], embed_z], dim=-1)
+        input = torch.cat([self.embedder_x(x_), embed_z], dim=-1)
         if self.num_rec_layers == 1:
             h_prev, c_prev = self.hidden_decoder(input, (h_prev, c_prev))
         else:

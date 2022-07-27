@@ -141,8 +141,13 @@ class ExtendedKalmanVAE(nn.Module):
         nll = -(p_x).mean(dim=0).sum()
         ## KL terms
         smoothed_mean, smoothed_cov = smoothed
-        smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), 
+        try:
+            smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), 
                                         scale_tril=torch.linalg.cholesky(smoothed_cov))
+        except:
+            print(smoothed_mean)
+            np.save('smoothed_mean_EKF.npy', smoothed_mean.detach().cpu().numpy())
+            raise Exception
         z_sample = smoothed_z.sample()
         decoder_z = MultivariateNormal(torch.zeros(self.latent_dim).to(x.device), scale_tril=torch.linalg.cholesky(self.Q))
         decoder_z_0 = MultivariateNormal(self.mu_1, scale_tril=torch.linalg.cholesky(self.Sigma_1))
@@ -194,7 +199,12 @@ class ExtendedKalmanVAE(nn.Module):
         a_sample = a_sample.reshape(B,T,-1)
         filt = self._kalman_posterior(a_sample, filter_only=True)
         filt_mean, filt_cov = filt
-        filt_z = MultivariateNormal(filt_mean[-1].squeeze(-1), scale_tril=torch.linalg.cholesky(filt_cov[-1]))
+        try:
+            filt_z = MultivariateNormal(filt_mean[-1].squeeze(-1), scale_tril=torch.linalg.cholesky(filt_cov[-1]))
+        except:
+            print(filt_mean[-1])
+            np.save('smoothed_mean_EKF.npy', filt_mean[-1].detach().cpu().numpy())
+            raise Exception
         z_sample = filt_z.sample()
         _shape = [a_sample.size(i) if i!=1 else seq_len for i in range(len(a_sample.size()))]
         obs_seq = torch.zeros(_shape).to(input.device)

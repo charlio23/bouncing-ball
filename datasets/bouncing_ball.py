@@ -115,7 +115,7 @@ class BouncingBall2D(object):
             temp_surf = pygame.image.fromstring(string_image,(256, 256),'RGB' )
             tmp_arr = pygame.surfarray.array3d(temp_surf)
             # Change to grayscale
-            image = cv2.cvtColor(cv2.resize(tmp_arr, dsize=(32, 32)), cv2.COLOR_RGB2GRAY)
+            image = cv2.cvtColor(cv2.resize(tmp_arr, dsize=(16, 16)), cv2.COLOR_RGB2GRAY)
             image_seq.append(image)
         positions = np.array(positions)
         image_seq = np.array(image_seq)
