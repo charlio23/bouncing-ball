@@ -3,11 +3,11 @@ import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, Normal, Bernoulli
 
-from models.modules import CNNFastDecoder, CNNFastEncoder, MLP
+from models.modules import CNNFastDecoder, CNNFastEncoder, MLP, CNNFastDecoderKVAE
 from glow_pytorch.model import Glow
 
 class KalmanVAE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, obs_dim, latent_dim, num_modes, beta=1, alpha='mlp', mode='base'):
+    def __init__(self, input_dim, hidden_dim, obs_dim, latent_dim, num_modes, beta=1, alpha='mlp', mode='base', device='cuda', gamma=1):
         super(KalmanVAE, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -18,42 +18,55 @@ class KalmanVAE(nn.Module):
         self.beta = beta
         self.alpha = alpha
         self.mode = mode
+        self.device = device
         self.encoder = None
         self.decoder = None
         self.flow_model = None
+        self.gamma = gamma
         if self.mode=='base':
-            self.encoder = CNNFastEncoder(self.input_dim, self.obs_dim)
-            self.decoder = CNNFastDecoder(self.obs_dim, self.input_dim)
+            #self.encoder = CNNFastEncoder(self.input_dim, self.obs_dim)
+            #self.decoder = CNNFastDecoder(self.obs_dim, self.input_dim)
+            self.encoder = MLP(self.input_dim, self.hidden_dim, 2*self.latent_dim)
+            self.decoder = MLP(self.latent_dim, self.hidden_dim, self.input_dim)
         else:
             self.flow_model = Glow(1, 32, 4)
             self.split_sizes = None
             self.recalc_split = False
         if self.mode=='greparam':
-            self.C1 = nn.Parameter(torch.randn(self.num_modes, 6, 6)*0.05)
-            self.C2 = nn.Parameter(torch.randn(self.num_modes, 4, 4)*0.05)
+            #self.C1 = nn.Parameter(torch.randn(self.num_modes, 6, 6)*0.05)
+            #self.C2 = nn.Parameter(torch.randn(self.num_modes, 4, 4)*0.05)
             #self.C3 = nn.Parameter(torch.randn(self.num_modes, 4, 4)*0.05)
+            self.C1 = nn.Parameter(torch.randn(4,16, 3, 3)*0.05)
+            self.C2 = nn.Parameter(torch.randn(16,16, 3, 3)*0.05)
+            self.C3 = nn.Parameter(torch.randn(16,16, 3, 3)*0.05)
+            self.C4 = nn.Parameter(torch.randn(16,1, 4, 4)*0.05)
+
+            self.C1_indices = self._get_indices_sparse_kernel_matrix(self.C1, 3, 3)
+            self.C2_indices = self._get_indices_sparse_kernel_matrix(self.C2, 7, 7)
+            self.C3_indices = self._get_indices_sparse_kernel_matrix(self.C3, 15, 15)
+            self.C4_indices = self._get_indices_sparse_kernel_matrix(self.C4, 32, 32)
         else:
             self.C = nn.Parameter(torch.randn(self.num_modes, self.obs_dim, self.latent_dim)*0.05)
         #self.decoder = CNNResidualDecoder(self.obs_dim, self.input_dim)
         if self.alpha=='mlp':
-            self.parameter_net = MLP(self.obs_dim, 128, self.num_modes)
+            self.parameter_net = MLP(self.obs_dim, self.hidden_dim, self.num_modes)
         else:
-            self.parameter_net = nn.LSTM(self.obs_dim, 32, 
+            self.parameter_net = nn.LSTM(self.obs_dim, self.hidden_dim, 
                                          2, batch_first=True)
-            self.alpha_out = nn.Linear(32, self.num_modes)
+            self.alpha_out = nn.Linear(self.hidden_dim, self.num_modes)
 
         # Initial latent code a_0
         self.start_code = nn.Parameter(torch.zeros(self.obs_dim))
         self.state_dyn_net = None
         # Initial p(z_1) distribution
-        self.mu_1 = (torch.zeros(self.latent_dim)).cuda().float()
-        self.Sigma_1 = (torch.eye(self.latent_dim)).cuda().float()
+        self.mu_1 = (torch.zeros(self.latent_dim)).to(self.device).float()
+        self.Sigma_1 = (torch.eye(self.latent_dim)).to(self.device).float()
         # Matrix modes
         self.A = nn.Parameter(torch.eye(self.latent_dim).unsqueeze(0).repeat(self.num_modes,1,1))
         #self.C = nn.Parameter(torch.randn(self.num_modes, self.obs_dim, self.latent_dim)*0.05)
 
-        self.Q = 0.05*torch.eye(self.latent_dim).cuda().float()
-        self.R = 0.01*torch.eye(self.obs_dim).cuda().float()
+        self.Q = 0.05*torch.eye(self.latent_dim).to(self.device).float()
+        self.R = 0.01*torch.eye(self.obs_dim).to(self.device).float()
 
 
 
@@ -66,12 +79,12 @@ class KalmanVAE(nn.Module):
                 m.bias.data.fill_(0.1)
 
     def _encode_obs(self, x, variational=True):
-        (z_mu, z_log_var) = self.encoder(x)
+        (z_mu, z_log_var) = self.encoder(x).split(self.latent_dim, dim=-1)
         eps = torch.normal(mean=torch.zeros_like(z_mu)).to(x.device)
         z_std = (z_log_var*0.5).exp()
         sample = z_mu
         if variational:
-            sample += z_std*eps
+            sample = sample + z_std*eps
 
         return sample, z_mu, z_log_var
 
@@ -95,20 +108,32 @@ class KalmanVAE(nn.Module):
         
         return A_t, C_t
 
-    def _get_sparse_kernel_matrix(self, K, h_X=16, w_X=16, s=2):
-        # Assuming no channels and stride == 2.
+    def _get_indices_sparse_kernel_matrix(self, K, h_X, w_X, s=2):
+
+        # Assuming no channels and stride == 1.
         # Convert the kernel matrix to sparse matrix (dense matrix with lots of zeros in fact).
-        num_modes, h_K, w_K = K.size()
+        # This is a little bit brain-twisting.
 
+        _, _, h_K, w_K = K.size()
         h_Y, w_Y = (h_X - h_K)//s + 1, (w_X - w_K)//s + 1
-
-        W = torch.zeros((num_modes, h_Y * w_Y, h_X * w_X)).to(K.device)
+        index_matrix = []
+        index_kernel = []
         for i in range(h_Y):
             for j in range(w_Y):
                 for ii in range(h_K):
                     for jj in range(w_K):
-                        W[:,i * w_Y + j, s*i * w_X + s*j + ii * w_X + jj] = K[:,ii, jj]
-        return W
+                        index_matrix.append( (i * w_Y + j)*h_X*w_X +  s*i * w_X + s*j + ii * w_X + jj)
+                        index_kernel.append(ii*w_K + jj)
+        return index_matrix, index_kernel
+    
+    def _get_deconv_from_indices(self, index_mat, index_kernel, K, h_Y, h_X):
+            w_Y = h_Y
+            w_X = h_X
+            n_in, n_out, _, _ = K.size()
+            M = torch.zeros((n_in, n_out, h_Y * w_Y*h_X * w_X)).to(K.device)
+            M[:,:,index_mat] = K.reshape(n_in,n_out,-1)[:,:,index_kernel]
+            M = M.reshape((n_in, n_out, h_Y * w_Y, h_X * w_X)).permute(2,0,3,1).reshape(h_Y * w_Y*n_in, h_X * w_X*n_out).T
+            return M
 
     def _interpolate_matrices(self, obs):
         # obs: (B ,T, N)
@@ -120,19 +145,25 @@ class KalmanVAE(nn.Module):
             dyn_emb = self.parameter_net(joint_obs.reshape(B*T, -1))
         else:
             dyn_emb, self.state_dyn_net = self.parameter_net(joint_obs)
-            dyn_emb = self.alpha_out(dyn_emb.reshape(B*T,32))
-        inter_weight = dyn_emb.softmax(-1)
+            dyn_emb = self.alpha_out(dyn_emb.reshape(B*T,-1))
+        inter_weight = (dyn_emb/self.gamma).softmax(-1)
         A_t = torch.matmul(inter_weight, self.A.reshape(self.num_modes,-1)).reshape(B,T,self.latent_dim,self.latent_dim)
         if self.mode != 'greparam':
             C_t = torch.matmul(inter_weight, self.C.reshape(self.num_modes,-1)).reshape(B,T,self.obs_dim,self.latent_dim)
         else:
-            C1 = self._get_sparse_kernel_matrix(self.C1, 32, 32).transpose(1,2)
-            C2 = self._get_sparse_kernel_matrix(self.C2, 14, 14, s=2).transpose(1,2)
+            C1 = self._get_deconv_from_indices(self.C1_indices[0], self.C1_indices[1], self.C1, 1, 3)
+            C2 = self._get_deconv_from_indices(self.C2_indices[0], self.C2_indices[1], self.C2, 3, 7)
+            C3 = self._get_deconv_from_indices(self.C3_indices[0], self.C3_indices[1], self.C3, 7, 15)
+            C4 = self._get_deconv_from_indices(self.C4_indices[0], self.C4_indices[1], self.C4, 15, 32)
+            C_t = torch.matmul(C4, torch.matmul(C3, torch.matmul(C2, C1))).unsqueeze(0).unsqueeze(0).expand(B,T,-1,-1)
+            #C1 = self._get_sparse_kernel_matrix(self.C1, 32, 32).transpose(1,2)
+            #C2 = self._get_sparse_kernel_matrix(self.C2, 14, 14, s=2).transpose(1,2)
             #C3 = self._get_sparse_kernel_matrix(self.C3, 6, 6, s=2).transpose(1,2)
-            C = torch.matmul(C1,C2)#,C3)
+            #C = torch.matmul(C1,C2)#,C3)
             #C = torch.matmul(torch.matmul(C1,C2),C3)
-            C_t =torch.matmul(inter_weight, C.reshape(self.num_modes,-1)).reshape(B,T,self.obs_dim,self.latent_dim)
-        return A_t, C_t
+            #C_t =torch.matmul(inter_weight, C.reshape(self.num_modes,-1)).reshape(B,T,self.obs_dim,self.latent_dim)
+
+        return A_t, C_t, inter_weight
 
     def _filter_posterior(self, obs, A, C):
         # obs: (T ,B, N)
@@ -254,10 +285,10 @@ class KalmanVAE(nn.Module):
         
         return mu_z_smooth, Sigma_z_smooth
 
-    def _kalman_posterior(self, obs, mask=None, filter_only=False):
+    def _kalman_posterior(self, obs, mask=None, filter_only=False, get_weights=False):
         # obs: (B ,T, N)
         if mask is None:
-            A, C = self._interpolate_matrices(obs)
+            A, C, weights = self._interpolate_matrices(obs)
             filtered, pred = self._filter_posterior(obs.transpose(0,1), A, C)
         else:
             filtered, pred, A, C = self._filter_posterior_missing(obs.transpose(0,1), mask)
@@ -265,7 +296,8 @@ class KalmanVAE(nn.Module):
         if filter_only:
             return filtered, A, C
         smoothed = self._smooth_posterior(A, filtered, pred)
-        
+        if get_weights:
+            return smoothed, A, C, weights
         return smoothed, A, C
 
     def _decode(self, z):
@@ -309,18 +341,26 @@ class KalmanVAE(nn.Module):
         return log_p
 
     def _compute_elbo(self, x, mask_frames, mask_visual, x_hat, a_mu, a_log_var, a_sample, smoothed, A, C):
-        (B, T, ch, H, W) = x.size()
+        #(B, T, ch, H, W) = x.size()
+        #if mask_frames is None:
+        #    mask_frames = torch.ones(B,T).to(x.device)
+        #if mask_visual is None:
+        #    mask_visual = torch.ones(B, T, ch, H, W).to(x.device)
+        (B, T, D) = x.size()
         if mask_frames is None:
             mask_frames = torch.ones(B,T).to(x.device)
         if mask_visual is None:
-            mask_visual = torch.ones(B, T, ch, H, W).to(x.device)
+            mask_visual = torch.ones(B, T).to(x.device)
+            
         # max: ELBO = log p(x_t|a_t) - (log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1))
         # min: -ELBO =  - log p(x_t|a_t) + log q(a) + log q(z) - log p(a_t | z_t) - log p(z_t| z_t-1)
         # Fixed variance
         # Reconstruction Loss p(x_t | a_t)
-        decoder_x = Bernoulli(x_hat)
-        p_x = (decoder_x.log_prob(x)*mask_visual).reshape(B,T,-1).sum(-1)
-        nll = -(p_x*mask_frames).mean(dim=0).sum()
+        decoder_x = MultivariateNormal(x_hat, covariance_matrix=torch.eye(self.input_dim).to(self.device)*0.01)
+        #p_x = (decoder_x.log_prob(x)*mask_visual).reshape(B,T,-1).sum(-1)
+        #nll = -(p_x*mask_frames).mean(dim=0).sum()
+        p_x = (decoder_x.log_prob(x)).sum(-1)
+        nll = -(p_x).mean(dim=0).sum()
         ## KL terms
         smoothed_mean, smoothed_cov = smoothed
         smoothed_z = MultivariateNormal(smoothed_mean.squeeze(-1), 
@@ -367,10 +407,12 @@ class KalmanVAE(nn.Module):
     def forward(self, x, mask_frames=None, mask_visual=None, variational=True):
         # Input is (B,T,C,H,W)
         # Autoencode
-        (B,T,C,H,W) = x.size()
+        (B,T,D) = x.size()
+        #(B,T,C,H,W) = x.size()
         # q(a_t|x_t)
         if self.mode=='base':
-            a_sample, a_mu, a_log_var = self._encode_obs(x.reshape(B*T,C,H,W), variational)
+            a_sample, a_mu, a_log_var = self._encode_obs(x.reshape(B*T,D), variational)
+            #a_sample, a_mu, a_log_var = self._encode_obs(x.reshape(B*T,C,H,W), variational)
             a_sample = a_sample.reshape(B,T,-1)
             a_mu = a_mu.reshape(B,T,-1)
             a_log_var = a_log_var.reshape(B,T,-1)
@@ -385,15 +427,15 @@ class KalmanVAE(nn.Module):
                 if self.recalc_split:
                     self.split_sizes.append(a_sample[i].size())
                 a_sample[i] = a_sample[i].reshape(B,T,-1)
-            self.recalc_split = False
-            return
+            self.recalc_split = False   
             a_sample = torch.cat(a_sample,dim=-1)
             # q(z|a) For mode=glow, only filtered distribution is enough
             smoothed, A_t, C_t = self._kalman_posterior(a_sample, mask_frames, filter_only=True)
 
         # p(x_t|a_t)
         if self.mode=='base':
-            x_hat = self._decode(a_sample.reshape(B*T,-1)).reshape(B,T,C,H,W)
+            x_hat = self._decode(a_sample.reshape(B*T,-1)).reshape(B,T,D)
+            #x_hat = self._decode(a_sample.reshape(B*T,-1)).reshape(B,T,C,H,W)
             # ELBO
             z_sample, losses = self._compute_elbo(x, mask_frames, mask_visual, x_hat, a_mu, a_log_var, a_sample.transpose(0,1), smoothed, A_t, C_t)
         else:
@@ -433,10 +475,15 @@ class KalmanVAE(nn.Module):
         latent_prev = z_sample
         obs_prev = a_sample[:,-1]
         if self.mode=='greparam':
-            C1 = self._get_sparse_kernel_matrix(self.C1, 32, 32).transpose(1,2)
-            C2 = self._get_sparse_kernel_matrix(self.C2, 14, 14, s=2).transpose(1,2)
+            C1 = self._get_deconv_from_indices(self.C1_indices[0], self.C1_indices[1], self.C1, 1, 3)
+            C2 = self._get_deconv_from_indices(self.C2_indices[0], self.C2_indices[1], self.C2, 3, 7)
+            C3 = self._get_deconv_from_indices(self.C3_indices[0], self.C3_indices[1], self.C3, 7, 15)
+            C4 = self._get_deconv_from_indices(self.C4_indices[0], self.C4_indices[1], self.C4, 15, 32)
+            _C = torch.matmul(C4, torch.matmul(C3, torch.matmul(C2, C1))).unsqueeze(0).expand(B,-1,-1)
+            #C1 = self._get_sparse_kernel_matrix(self.C1, 32, 32).transpose(1,2)
+            #C2 = self._get_sparse_kernel_matrix(self.C2, 14, 14, s=2).transpose(1,2)
             #C3 = self._get_sparse_kernel_matrix(self.C3, 6, 6, s=2).transpose(1,2)
-            _C = torch.matmul(C1,C2)#,C3)
+            #_C = torch.matmul(C1,C2)#,C3)
             #_C = torch.matmul(torch.matmul(C1,C2),C3)
             #_C = self._get_sparse_kernel_matrix(self.C).transpose(1,2)
         for t in range(seq_len):
@@ -453,7 +500,8 @@ class KalmanVAE(nn.Module):
             if self.mode != 'greparam':
                 C_t = torch.matmul(inter_weight, self.C.reshape(self.num_modes,-1)).reshape(B,self.obs_dim,self.latent_dim)
             else:
-                C_t =torch.matmul(inter_weight, _C.reshape(self.num_modes,-1)).reshape(B,self.obs_dim,self.latent_dim)
+                #C_t =torch.matmul(inter_weight, _C.reshape(self.num_modes,-1)).reshape(B,self.obs_dim,self.latent_dim)
+                C_t = _C
             # Calculate new z_t
             ## Update z_t
             latent_prev = torch.matmul(A_t, latent_prev.unsqueeze(-1)).squeeze(-1)
@@ -506,6 +554,17 @@ class KalmanVAE(nn.Module):
         loglikeli = ((1/L)*p_x).log().reshape(B,-1).sum(-1)
         
         return loglikeli
+
+    def get_alpha_from_obs(self, x, variational=True):
+        # Input is (B,T,C,H,W)
+        # Autoencode
+        (B,T,D) = x.size()
+        #(B,T,C,H,W) = x.size()
+        # q(a_t|x_t)
+        a_sample, _, _ = self._encode_obs(x.reshape(B*T,D), variational)
+        #a_sample, a_mu, a_log_var = self._encode_obs(x.reshape(B*T,C,H,W), variational)
+        a_sample = a_sample.reshape(B,T,-1)
+        return self._kalman_posterior(a_sample, get_weights=True)[-1]
 
 if __name__=="__main__":
     # Trial run

@@ -14,7 +14,7 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.optim import Adam
 from torch.optim.lr_scheduler import StepLR
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 from dataloaders.bouncing_data import BouncingBallDataLoader, MissingBallDataset, SquareBallDataset
 
@@ -40,13 +40,15 @@ parser.add_argument('--alpha', default='rnn', type=str, help='Alpha network type
 parser.add_argument('--missing', action='store_true', help='Activate missing frames')
 parser.add_argument('--corrupt', action='store_true', help='Activate corrupt data')
 parser.add_argument('--model', default='kvae', type=str, help='Model type (ekvae|kvae|kglow|greparam)')
+parser.add_argument('--experiment', default='salsa', type=str, help='Experiment type')
+parser.add_argument('--device', default='cuda:1', type=str, help='Device')
 
 def get_device(cuda=True):
-    return 'cuda' if cuda and torch.cuda.is_available() else 'cpu'
+    return args.device if cuda and torch.cuda.is_available() else 'cpu'
 
 def save_checkpoint(state, filename='model'):
-    os.makedirs("/data2/users/cb221/stored_models_GLOW/", exist_ok=True)
-    torch.save(state, "/data2/users/cb221/stored_models_GLOW/" + filename + '_latest.pth.tar')
+    os.makedirs("/data2/users/cb221/stored_models_KVAE_salsa/", exist_ok=True)
+    torch.save(state, "/data2/users/cb221/stored_models_KVAE_salsa/" + filename + '_latest.pth.tar')
 
 def main():
     global args, writer
@@ -57,29 +59,33 @@ def main():
     device = get_device()
     print("=> Using device: " + device)
     # Load dataset
-    if args.missing:
-        dl = MissingBallDataset(args.train_root)
-    elif args.corrupt:
-        dl = SquareBallDataset(args.train_root,
-                               '/data2/users/hbz15/hmnist/mask_train')
+    if args.experiment == 'salsa':
+        obs = torch.from_numpy(np.load("new_salsa_data_preprocessed.npy"))[1:]
+        dl = TensorDataset(obs)
     else:
-        dl = BouncingBallDataLoader(args.train_root, images=True)
+        if args.missing:
+            dl = MissingBallDataset(args.train_root)
+        elif args.corrupt:
+            dl = SquareBallDataset(args.train_root,
+                                '/data2/users/hbz15/hmnist/mask_train')
+        else:
+            dl = BouncingBallDataLoader(args.train_root, images=True)
     train_loader = DataLoader(dl, batch_size=args.batch_size, shuffle=True)
-    sample = next(iter(train_loader)).float()
-    _, _, input_dim, *_ = sample.size()
+    #sample = next(iter(train_loader)).float()
+    #_, _, input_dim, *_ = sample.size()
     variational = not args.determ
     # Load model
     if args.model=='kvae':
-        kvae = KalmanVAE(input_dim=1, hidden_dim=32, obs_dim=2, 
-                     latent_dim=4, num_modes=3, beta=args.beta, 
-                     alpha=args.alpha).float().cuda()
+        kvae = KalmanVAE(input_dim=41*3, hidden_dim=256, obs_dim=64, 
+                     latent_dim=64, num_modes=3, beta=args.beta, 
+                     alpha=args.alpha, device=args.device).float().to(args.device)
     elif args.model=='kglow' or args.model=='greparam':
         kvae = KalmanVAE(input_dim=1, hidden_dim=32, obs_dim=1024, 
-                     latent_dim=36, num_modes=3, beta=args.beta, 
-                     alpha=args.alpha, mode=args.model).float().cuda()
+                     latent_dim=4, num_modes=3, beta=args.beta, 
+                     alpha=args.alpha, mode=args.model).float().to(args.device)
     else:
         kvae = ExtendedKalmanVAE(input_dim=1, hidden_dim=32, obs_dim=4, 
-                     latent_dim=12, beta=args.beta).float().cuda() 
+                     latent_dim=12, beta=args.beta).float().to(args.device) 
     print(kvae)
     if args.load is not None:
         kvae.load_state_dict(torch.load(args.load)['kvae'])
@@ -92,7 +98,7 @@ def main():
     else:
         optimizer = Adam(kvae.parameters(), lr=args.lr)
     gamma = 0.85
-    scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
+    scheduler = StepLR(optimizer, step_size=400, gamma=gamma)
     changed = False
     clip = 100
     # Train Loop
@@ -101,20 +107,22 @@ def main():
         if epoch >= args.kf_steps and not changed and args.model=='kvae':
             changed = True
             optimizer = Adam(kvae.parameters(), lr=args.lr)
-            scheduler = StepLR(optimizer, step_size=20, gamma=gamma)
+            scheduler = StepLR(optimizer, step_size=500, gamma=gamma)
         end = time.time()
-        for i, sample in enumerate(train_loader, 1):
+        for i, (sample,) in enumerate(train_loader, 1):
             # Forward sample to network
-            b, seq_len, C, H, W = sample[:,:args.seq_len].size()
-            var = (Variable(sample[:,:args.seq_len].float(), requires_grad=True).to(device) > 0.5).float()
+            b = 30
+            #b, seq_len, C, H, W = sample[:,:args.seq_len].size()
+            #var = (Variable(sample[:,:args.seq_len].float(), requires_grad=True).to(device) > 0.5).float()
+            var = Variable(sample[:,:args.seq_len].float(), requires_grad=True).to(device).float()
             optimizer.zero_grad()
             #mask = torch.ones(b,seq_len).to(device)
             #mask[:,7:14] = 0
             if args.missing:
-                mask = sample[1][:,:args.seq_len].cuda()
+                mask = sample[1][:,:args.seq_len].to(args.device)
                 x_hat, a_mu, _, losses = kvae(var, mask_frames=mask, variational=variational)
             elif args.corrupt:
-                mask = sample[1][:,:args.seq_len].cuda()
+                mask = sample[1][:,:args.seq_len].to(args.device)
                 x_hat, a_mu, _, losses = kvae(var, mask_visual=mask, variational=variational)
             else:
                 if args.model=='kglow' or args.model=='greparam':
@@ -126,7 +134,8 @@ def main():
                     
                 else:
                     mask = None
-                    x_hat, a_mu, _, losses = kvae(var, variational=variational)
+                    input = var
+                    x_hat, a_mu, _, losses = kvae(input, variational=variational)
             # Compute loss and optimize params
             losses['loss'].backward()
             torch.nn.utils.clip_grad_norm_(kvae.parameters(), clip)
@@ -136,22 +145,32 @@ def main():
             # Measure elapsed time
             batch_time = time.time() - end
             end = time.time()
-            if i % 10 == 0:
+            if i % 1 == 0:
+                """
                 with torch.no_grad():
-                    pred_pos, obs_seq, _ = kvae.predict_sequence(var + torch.rand_like(var)/n_bins, seq_len=args.seq_len)
+                    if args.model=='kglow' or args.model=='greparam':
+                        pred_pos, obs_seq, _ = kvae.predict_sequence(var + torch.rand_like(var)/n_bins, seq_len=args.seq_len)
+                        pred_pos = ((pred_pos + 0.5) > 0.5).float()
+                    else:
+                        pred_pos, obs_seq, _ = kvae.predict_sequence(var, seq_len=args.seq_len)
                     target = (sample[:,args.seq_len:args.seq_len*2].to(pred_pos.device) > 0.5).float()
-                    pred_pos = ((pred_pos + 0.5) > 0.5).float()
                     pred_mse = F.mse_loss(pred_pos, target, reduction='sum')/(args.batch_size)
                     writer.add_scalar('data/prediction_loss', pred_mse, i + epoch*len(train_loader))
                 print('Epoch: [{0}][{1}/{2}]\t'
                     'Time {batch_time:.3f}\t'
                     'Loss {loss:.4e}\t MSE: {mse:.4e}\t PRED: {pred:.4e}'.format(
                     epoch, i, len(train_loader), batch_time=batch_time, loss=losses['elbo'], mse=mse, pred=pred_mse))
+                """
+                print('Epoch: [{0}][{1}/{2}]\t'
+                    'Time {batch_time:.3f}\t'
+                    'Loss {loss:.4e}\t MSE: {mse:.4e}'.format(
+                    epoch, i, len(train_loader), batch_time=batch_time, loss=losses['elbo'], mse=mse))
                 writer.add_scalar('data/mse_loss', mse, i + epoch*len(train_loader))
                 if variational:
                     writer.add_scalar('data/kl_loss', losses['kld'], i + epoch*len(train_loader))
                 writer.add_scalar('data/elbo', losses['elbo'], i + epoch*len(train_loader))
                 writer.add_scalar('data/loss', losses['loss'], i + epoch*len(train_loader))
+            """
             if i % 100 == 0:
                 video_tensor_hat = x_hat.reshape((b, seq_len, C, H, W)).detach().cpu()
                 video_tensor_true = sample[:,:args.seq_len].detach().cpu()
@@ -170,12 +189,14 @@ def main():
                 #writer.add_figure('data/inferred_latent_cont_state', fig_inferred, i + epoch*len(train_loader))
                 writer.add_video('data/Predict_vid',video_tensor_predict[:16], i + epoch*len(train_loader))
                 writer.add_video('data/True_Future_vid',video_tensor_predict_true[:16], i + epoch*len(train_loader))
-
+            """
         scheduler.step()
-        save_checkpoint({
-            'epoch': epoch,
-            'kvae': kvae.state_dict()
-        }, filename=args.name)
+        if epoch%100 == 0:
+            save_checkpoint({
+                'epoch': epoch,
+                'kvae': kvae.state_dict()
+            }, filename=args.name)
+            kvae.gamma = np.maximum(kvae.gamma*0.5, 0.1)
 
 if __name__=="__main__":
     main()

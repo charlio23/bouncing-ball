@@ -90,19 +90,19 @@ class ResidualBlock(nn.Module):
     def __init__(self, input_channels):
         super(ResidualBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_channels=input_channels,
-                                out_channels=32,
+                                out_channels=64,
                                 kernel_size=3,
                                 stride=1,
                                 padding=1)
-        self.conv2 = nn.Conv2d(in_channels=32,
-                                out_channels=32,
+        self.conv2 = nn.Conv2d(in_channels=64,
+                                out_channels=64,
                                 kernel_size=3,
                                 stride=1,
                                 padding=1)
         self.input_channels = input_channels
-        if input_channels != 32:
+        if input_channels != 64:
             self.match_conv = nn.Conv2d(in_channels=input_channels,
-                        out_channels=32,
+                        out_channels=64,
                         kernel_size=1,
                         stride=1,
                         padding=0)
@@ -110,7 +110,7 @@ class ResidualBlock(nn.Module):
 
     def forward(self, x):
         x = F.upsample_bilinear(x, scale_factor=2)
-        res = self.match_conv(x) if self.input_channels!=32 else x
+        res = self.match_conv(x) if self.input_channels!=64 else x
         x = F.relu(self.conv1(x))
         x = self.conv2(x)
         return x + res
@@ -120,12 +120,12 @@ class CNNResidualDecoder(nn.Module):
     def __init__(self, latent_dim, out_dim=3):
         super(CNNResidualDecoder, self).__init__()
         self.latent_dim = latent_dim
-        self.first_mlp = MLP(latent_dim, latent_dim*4, latent_dim*4*4)
+        self.first_mlp = MLP(latent_dim, latent_dim, latent_dim*4*4)
         self.first_block = ResidualBlock(input_channels=latent_dim)
         self.residual_blocks = nn.ModuleList([
-            ResidualBlock(input_channels=32)
+            ResidualBlock(input_channels=64)
         for i in range(2)])
-        self.out_conv = nn.Conv2d(in_channels=32,
+        self.out_conv = nn.Conv2d(in_channels=64,
                                   out_channels=out_dim,
                                   kernel_size=3,
                                   stride=1,
@@ -142,7 +142,7 @@ class CNNResidualDecoder(nn.Module):
 
 class CNNFastDecoderKVAE(nn.Module):
     def __init__(self, input_dim, output_dim):
-        super(CNNFastDecoder, self).__init__()
+        super(CNNFastDecoderKVAE, self).__init__()
         self.in_dec = nn.Linear(input_dim, 32*4*4)
         self.hidden_convs = nn.ModuleList([
             nn.Conv2d(in_channels=32,
@@ -212,19 +212,19 @@ class CNNFastEncoder(nn.Module):
                       kernel_size=3,
                       stride=2,
                       padding=1)
-        for _ in range(1)])
+        for _ in range(2)])
 
-        self.out_mean = nn.Linear(32*8*8, output_dim)
-        if log_var:
-            self.out_log_var = nn.Linear(32*8*8, output_dim)
-        else:
-            self.out_log_var = None
+        self.out_mean = nn.Linear(32*4*4, output_dim)
+        self.out_log_var = nn.Linear(32*4*4, output_dim)
+
+        self.log_var = log_var
+
     def forward(self, x):
         x = F.relu(self.in_conv(x))
         for hidden_layer in self.hidden_conv:
             x = F.relu(hidden_layer(x))
         x = x.flatten(-3, -1)
-        if self.out_log_var is None:
+        if not self.log_var:
             return self.out_mean(x)
         mean, log_var = self.out_mean(x), self.out_log_var(x)
         return mean, log_var
