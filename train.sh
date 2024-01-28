@@ -1,0 +1,2 @@
+#CUDA_VISIBLE_DEVICES=$1 python train_VAE.py --name VAE_square_beta_0_1 --train_root /data2/users/cb221/bouncing_ball_square/train --epochs 100 -b 16 --beta 0.1
+CUDA_VISIBLE_DEVICES=$1 python train_VRNN.py --name VRNN_NBA_velocities --train_root /data2/users/cb221/NBA_data_velocities --epochs 100 -b 24 --beta 1e-1 --hidden_dim 256 --latent_dim 128 --lr 1e-4

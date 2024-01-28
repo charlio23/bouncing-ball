@@ -50,10 +50,13 @@ def kl_categorical_uniform(preds, num_categories, eps=1e-16):
     kl_div = preds * (torch.log(preds + eps) - np.log(1/num_categories + eps))
     return kl_div.sum() / preds.size(0)
 
-def mse_through_time(input, target, visual=True):
+def mse_through_time(input, target, visual=True, reduce=True):
     total_mse = F.mse_loss(input, target, reduction='none')
     total_mse = total_mse.transpose(0,1)
     if visual:
-        return torch.mean(total_mse, dim = (1,2,3,4))
+        if reduce:
+            return torch.mean(total_mse, dim = (1,2,3,4))
+        else:
+            return torch.mean(total_mse, dim = (2,3,4))
     else:
         return torch.mean(total_mse, dim = (1,2))

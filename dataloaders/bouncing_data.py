@@ -76,10 +76,11 @@ class SquareBallDataset(Dataset):
 
 class BouncingBallDataLoader(Dataset):
 
-    def __init__(self, root_dir, images=True):
+    def __init__(self, root_dir, images=True, background=False):
         self.root_dir = root_dir
         self.file_list = os.listdir(root_dir)
         self.images = images
+        self.background = background
         if images:
             self.key = 'images'
         else:
@@ -96,6 +97,10 @@ class BouncingBallDataLoader(Dataset):
             im = im[:,np.newaxis,:,:]/255.0
         else:
             im = im.transpose((0,3,1,2))/255.0
+        if self.background:
+            bck = sample['background']
+            bck = bck.transpose((0,3,1,2))/255.0
+            return im, bck
         return im
 
 def visualize_rollout(rollout, interval=50, show_step=False, save=False):

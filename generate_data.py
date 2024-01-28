@@ -21,11 +21,11 @@ def generate_and_save(root_path, n_samples, start_seed, train=True):
         failed = True
         while(failed):
             game = BouncingBall2D()
-            positions, images = game.run()
+            positions, images, background = game.run()
             if positions is not None:
                 failed = False
                 filename = "{0:05d}".format(i)
-                np.savez(os.path.join(path, filename), positions=positions, images=images)
+                np.savez(os.path.join(path, filename), positions=positions, images=images, background=background)
 
     return path
 

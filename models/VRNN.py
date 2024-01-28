@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli
-from models.modules import MLP, CNNFastEncoder, CNNFastDecoder
+from zmq import EVENT_CLOSE_FAILED
+from models.modules import MLP, CNNFastEncoder, CNNFastDecoder, CNNResidualDecoder, CNNEncoder
 
 class VRNN(nn.Module):
-    def __init__(self, input_dim, input_pos, hidden_dim, latent_dim, num_rec_layers=1, input_type='base', decoder='LSTM'):
+    def __init__(self, input_dim, input_pos, hidden_dim, latent_dim, num_rec_layers=1, input_type='base', decoder='LSTM', ball_cond=False):
         super(VRNN, self).__init__()
         self.input_dim = input_dim
         self.input_pos = input_pos
@@ -13,14 +14,18 @@ class VRNN(nn.Module):
         self.num_rec_layers = num_rec_layers
         self.prior = MLP(self.hidden_dim, self.hidden_dim, self.latent_dim*2)
         self.input_type = input_type
+        if ball_cond:
+            self.ball_dim = 3
+        else:
+            self.ball_dim = 0
         if input_type=='visual':
-            #self.embedder_x = CNNEncoder(self.input_dim, self.latent_dim, 4, log_var=False)
-            #self.decoder = CNNResidualDecoder(self.hidden_dim + self.latent_dim)
-            self.embedder_x = CNNFastEncoder(self.input_dim, self.latent_dim)
-            self.decoder = CNNFastDecoder(self.hidden_dim + self.latent_dim, self.input_dim)
+            self.embedder_x = CNNEncoder(self.input_dim, self.latent_dim, 4, log_var=False)
+            self.decoder = CNNResidualDecoder(self.hidden_dim + self.latent_dim)
+            #self.embedder_x = CNNFastEncoder(self.input_dim, self.latent_dim, log_var=False)
+            #self.decoder = CNNFastDecoder(self.hidden_dim + self.latent_dim, self.input_dim)
         else:
             self.embedder_x = MLP(self.input_pos, self.hidden_dim, self.latent_dim)
-            self.decoder = MLP(self.hidden_dim + self.latent_dim, self.hidden_dim, self.input_pos)
+            self.decoder = MLP(self.hidden_dim + self.latent_dim + self.ball_dim, self.hidden_dim, self.input_pos)
         self.encoder = MLP(self.hidden_dim + self.latent_dim, self.hidden_dim, self.latent_dim*2)
         self.embedder_z = MLP(self.latent_dim, self.hidden_dim, self.latent_dim)
         if decoder=='vainilla':
@@ -57,12 +62,14 @@ class VRNN(nn.Module):
         sample = z_mu + z_std*eps
         return sample, z_mu, z_log_var
 
-    def _decode(self, z, h_prev, c_prev=None):
+    def _decode(self, z, h_prev, c_prev=None, ball_coord=None):
         embed_z = self.embedder_z(z)
         if self.num_rec_layers == 1:
             decoder_in = torch.cat([embed_z, h_prev], dim=-1)
         else:
             decoder_in = torch.cat([embed_z, h_prev[-1]], dim=-1)
+        if ball_coord is not None:
+            decoder_in = torch.cat([decoder_in, ball_coord], dim=-1)
         x_ = self.decoder(decoder_in)
         input = torch.cat([self.embedder_x(x_), embed_z], dim=-1)
         if self.num_rec_layers == 1:
@@ -91,7 +98,7 @@ class VRNN(nn.Module):
         sample = z_mu + z_std*eps
         return sample
     
-    def predict_sequence(self, input, seq_len=None):
+    def predict_sequence(self, input, seq_len=None, ball_coord=None):
         b, T, *_ = input.size()
         h_prev = [torch.zeros((b, self.hidden_dim)).to(input.device) for _ in range(self.num_rec_layers)]
         c_prev = [torch.zeros((b, self.hidden_dim)).to(input.device) for _ in range(self.num_rec_layers)]
@@ -104,18 +111,20 @@ class VRNN(nn.Module):
             last_x = input[:,i,:]
             # Autoencode
             z, _, _ = self._inference(last_x, h_prev)
-            _, h_prev, c_prev = self._decode(z, h_prev, c_prev)
+            _, h_prev, c_prev = self._decode(z, h_prev, c_prev, 
+                ball_coord[:,i,:] if ball_coord is not None else None)
         
         _shape = [input.size(i) if i!=1 else seq_len for i in range(len(input.size()))]
         reconstr_seq = torch.zeros(_shape).to(input.device)
         for i in range(seq_len):
             z_sampled = self._sample(h_prev)
-            pos_hat, h_prev, c_prev = self._decode(z_sampled, h_prev, c_prev)
+            pos_hat, h_prev, c_prev = self._decode(z_sampled, h_prev, c_prev, 
+                ball_coord[:,i+T,:] if ball_coord is not None else None)
             reconstr_seq[:, i, :] = pos_hat
 
         return reconstr_seq
         
-    def forward(self, x, mask_frames=None):
+    def forward(self, x, mask_frames=None, ball_coord=None):
         b, seq_len, *_ = x.size()
         h_prev = [torch.zeros((b, self.hidden_dim)).to(x.device) for _ in range(self.num_rec_layers)]
         c_prev = [torch.zeros((b, self.hidden_dim)).to(x.device) for _ in range(self.num_rec_layers)]
@@ -139,7 +148,8 @@ class VRNN(nn.Module):
                 z_mu_prior, z_log_var_prior = self._prior(h_prev)
             else:
                 z_mu_prior, z_log_var_prior = self._prior(h_prev[-1])
-            x_hat, h_prev, c_prev = self._decode(z, h_prev, c_prev)
+            x_hat, h_prev, c_prev = self._decode(z, h_prev, c_prev,
+                ball_coord[:,i,:] if ball_coord is not None else None)
 
             # Collect parameters
             reconstr_seq[:, i, :] = x_hat

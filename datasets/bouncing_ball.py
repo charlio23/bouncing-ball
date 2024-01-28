@@ -90,12 +90,13 @@ class BouncingBall2D(object):
         The main loop of the game.
         """
         if self.abort:
-            return None, None
+            return None, None, None
         # Main loop
         positions = []
         image_seq = []
+        background_seq = []
         self._create_ball()
-        for i in range(50):
+        for i in range(200):
             # Progress time forward
             for x in range(self._physics_steps_per_frame):
                 self._space.step(self._dt)
@@ -103,30 +104,32 @@ class BouncingBall2D(object):
                 self._balls[0].body.position[0] > 255 or \
                 self._balls[0].body.position[1] < 0 or \
                 self._balls[0].body.position[1] > 255:
-                return None, None
+                return None, None, None
             self._process_events()
             self._clear_screen()
-            self._draw_objects()
+            image, background = self._draw_objects()
             # Delay fixed time between frames
             #self._clock.tick(30)
             ball_pos = [self._balls[0].body.position[0],self._balls[0].body.position[1], self._balls[0].body.velocity[0], self._balls[0].body.velocity[1]]
             positions.append(ball_pos)
-            string_image = pygame.image.tostring(self._screen, 'RGB')
-            temp_surf = pygame.image.fromstring(string_image,(256, 256),'RGB' )
-            tmp_arr = pygame.surfarray.array3d(temp_surf)
+            #string_image = pygame.image.tostring(self._screen, 'RGB')
+            #temp_surf = pygame.image.fromstring(string_image,(256, 256),'RGB' )
+            #tmp_arr = pygame.surfarray.array3d(temp_surf)
             # Change to grayscale
-            image = cv2.cvtColor(cv2.resize(tmp_arr, dsize=(16, 16)), cv2.COLOR_RGB2GRAY)
+            #image = cv2.cvtColor(cv2.resize(tmp_arr, dsize=(32, 32)), cv2.COLOR_RGB2GRAY)
             image_seq.append(image)
+            background_seq.append(background)
         positions = np.array(positions)
         image_seq = np.array(image_seq)
-        return positions, image_seq
+        background_seq = np.array(background_seq)
+        return positions, image_seq, background_seq
 
     def _add_static_scenery(self) -> None:
         """
         Create the static bodies.
         :return: None
         """
-        #N = random.randint(4,9)
+        N = random.randint(4,9)
         #vertices = to_convex_contour(N)
         #x = np.array([vertices[i][0] for i in range(N)])
         #y = np.array([vertices[i][1] for i in range(N)])
@@ -183,11 +186,11 @@ class BouncingBall2D(object):
         x = random.randint(50, 200)
         y = random.randint(50, 200)
         body.position = x, y
-        #velocities = [(200, 200), (-200, 200), (-200, -100), (200, -200)]
-        vx = random.uniform(-5,5)*50
-        vy = random.randint(-5,5)*50
-        #body.velocity = random.choice(velocities)
-        body.velocity = vx, vy
+        velocities = [(200, 200), (-200, 200), (-200, -200), (200, -200)]
+        #vx = random.uniform(-5,5)*50
+        #vy = random.randint(-5,5)*50
+        body.velocity = random.choice(velocities)
+        #body.velocity = vx, vy
         shape = pymunk.Circle(body, radius, (0, 0))
         shape.elasticity = 1
         shape.density = 1
@@ -202,21 +205,36 @@ class BouncingBall2D(object):
         """
         self._screen.fill(pygame.Color("white"))
 
-    def _draw_objects(self) -> None:
+    def _draw_objects(self):
         """
         Draw the objects.
         :return: None
         """
-        self.draw()
+        return self.draw()
 
     def draw(self):
-            #self._screen.fill(pygame.Color(50, 50, 50))
-            self._screen.fill(pygame.Color(0, 0, 0))
-            #pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
-            pygame.draw.circle(self._screen, pygame.Color(255,255,255),self._balls[0].body.position, 35)
-            # Draw the static lines.
-            #for line in self.static_lines:
-            #    pygame.draw.lines(self._screen, pygame.Color(0,0,0), False, (line.a,line.b), 10)
+        self._screen.fill(pygame.Color(50, 50, 50))
+        #self._screen.fill(pygame.Color(0, 0, 0))
+        for line in self.static_lines:
+            pygame.draw.lines(self._screen, pygame.Color(0,0,0), False, (line.a,line.b), 10)
+        string_image = pygame.image.tostring(self._screen, 'RGB')
+        temp_surf = pygame.image.fromstring(string_image,(256, 256),'RGB' )
+        tmp_arr = pygame.surfarray.array3d(temp_surf)
+        # Change to grayscale
+        #background = cv2.cvtColor(cv2.resize(tmp_arr, dsize=(32, 32)), cv2.COLOR_RGB2GRAY)
+        background = cv2.resize(tmp_arr, dsize=(32, 32))
+        pygame.draw.circle(self._screen, pygame.Color(100,200,100),self._balls[0].body.position, 35)
+
+        string_image = pygame.image.tostring(self._screen, 'RGB')
+        temp_surf = pygame.image.fromstring(string_image,(256, 256),'RGB' )
+        tmp_arr = pygame.surfarray.array3d(temp_surf)
+        # Change to grayscale
+        image = cv2.resize(tmp_arr, dsize=(32, 32))
+        #pygame.draw.circle(self._screen, pygame.Color(255,255,255),self._balls[0].body.position, 35)
+        # Draw the static lines.
+        return image, background
+
+        
 
 
 
